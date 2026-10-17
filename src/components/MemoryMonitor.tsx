@@ -1,11 +1,13 @@
 import { bytesToGiB } from "../utils/format";
+import UsageGraph from "./UsageGraph";
 
 type MemoryMonitorProps = {
   usedMemory: number;
   totalMemory: number;
+  history: number[];
 };
 
-function MemoryMonitor({ usedMemory, totalMemory }: MemoryMonitorProps) {
+function MemoryMonitor({ usedMemory, totalMemory, history }: MemoryMonitorProps) {
   const memoryPercentage =
     totalMemory !== 0 ? (usedMemory / totalMemory) * 100 : 0;
 
@@ -25,6 +27,7 @@ function MemoryMonitor({ usedMemory, totalMemory }: MemoryMonitorProps) {
       <p className="metric-detail">
         {usedGiB.toFixed(1)} / {totalGiB.toFixed(1)} GiB
       </p>
+      <UsageGraph data={history} />
     </section>
   );
 }

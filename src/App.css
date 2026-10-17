@@ -187,3 +187,93 @@ body {
     font-size: 22px;
   }
 }
+
+/* LIVE USAGE GRAPHS */
+
+.dashboard-content svg {
+  display: block;
+  width: 100%;
+  height: 80px;
+  overflow: hidden;
+}
+
+.dashboard-content svg polyline {
+  vector-effect: non-scaling-stroke;
+}
+
+.graph-gridline {
+  stroke: #e5eaf0;
+  stroke-width: 0.6;
+  vector-effect: non-scaling-stroke;
+}
+
+/* BATTERY INDICATOR */
+
+.battery-track {
+  width: 100%;
+  height: 6px;
+
+  background-color: #e7ebef;
+  border-radius: 999px;
+
+  overflow: hidden;
+}
+
+.battery-fill {
+  height: 100%;
+
+  background-color: #8ba5bf;
+  border-radius: inherit;
+
+  transition: width 300ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .battery-fill {
+    transition: none;
+  }
+}
+
+/* MONITORING STATUS */
+
+.status-live::before {
+  background-color: #78ad92;
+}
+
+.status-connecting::before {
+  background-color: #d8ad68;
+}
+
+.status-offline::before {
+  background-color: #d98282;
+}
+
+/* LOADING STATE */
+
+.loading-message {
+  margin: 0;
+  padding: 20px 0;
+
+  font-size: 13px;
+  color: #8993a1;
+
+  text-align: center;
+}
+
+/* ERROR STATE */
+
+.error-message {
+  padding: 12px 14px;
+
+  background-color: #fff0f0;
+  border: 1px solid #f5dada;
+  border-radius: 10px;
+
+  color: #a34545;
+}
+
+.error-message p {
+  margin: 4px 0;
+  font-size: 12px;
+  line-height: 1.5;
+}

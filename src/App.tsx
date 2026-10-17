@@ -15,6 +15,9 @@ function App() {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
+  const [cpuHistory, setCpuHistory] = useState<number[]>([]);
+  const [memoryHistory, setMemoryHistory] = useState<number[]>([]);
+
   useEffect(() => {
     let timerId: ReturnType<typeof setTimeout>;
     let active = true;
@@ -29,16 +32,34 @@ function App() {
           setMetrics(result);
           setError(null);
           previouslyFailed = false;
+
+          // Update CPU history
+          setCpuHistory((previous) => {
+            const updatedHistory = [...previous, result.cpuUsage];
+            return updatedHistory.slice(-60);
+          });
+
+          // Calculate memory usage percentage
+          const memoryPercentage =
+            result.memoryTotal !== 0
+              ? (result.memoryUsed / result.memoryTotal) * 100
+              : 0;
+
+          // Update RAM history
+          setMemoryHistory((previous) => {
+            const updatedHistory = [...previous, memoryPercentage];
+            return updatedHistory.slice(-60);
+          });
         }
-      } catch (error) {
+      } catch (err) {
         if (active) {
           setLoading(false);
           setError("Unable to retrieve system metrics.");
-        }
 
-        if (active && !previouslyFailed) {
-          console.error("Failed to retrieve metrics", error);
-          previouslyFailed = true;
+          if (!previouslyFailed) {
+            console.error("Failed to retrieve metrics:", err);
+            previouslyFailed = true;
+          }
         }
       } finally {
         if (active) {
@@ -55,36 +76,57 @@ function App() {
     };
   }, []);
 
+  const status = error
+    ? "OFFLINE"
+    : loading
+      ? "CONNECTING"
+      : "LIVE";
+
   return (
     <main className="container">
       <header className="dashboard-header">
         <h1>System Monitor</h1>
-        <span className="status-label">
-          {error ? "OFFLINE" : metrics ? "LIVE" : "CONNECTING"}
+
+        <span
+          className={`status-label status-${status.toLowerCase()}`}
+          role="status"
+        >
+          {status}
         </span>
       </header>
 
       {error && (
         <div className="error-message" role="alert">
           <p>{error}</p>
-          {metrics && <p>Showing last successful readings.</p>}
+
+          {metrics && (
+            <p>Showing last successful readings.</p>
+          )}
         </div>
       )}
 
       <div className="dashboard-content">
         {metrics ? (
           <>
-            <CpuMonitor usage={metrics.cpuUsage} />
+            <CpuMonitor
+              usage={metrics.cpuUsage}
+              history={cpuHistory}
+            />
 
             <MemoryMonitor
               usedMemory={metrics.memoryUsed}
               totalMemory={metrics.memoryTotal}
+              history={memoryHistory}
             />
 
             <BatteryMonitor battery={metrics.battery} />
           </>
         ) : (
-          loading && <p>Loading system metrics...</p>
+          loading && (
+            <p className="loading-message">
+              Loading system metrics...
+            </p>
+          )
         )}
       </div>
     </main>
