@@ -2,7 +2,9 @@ import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 import type { SystemMetrics } from "./types/system";
-import { bytesToGiB } from "./utils/format";
+import CpuMonitor from "./components/CpuMonitor";
+import MemoryMonitor from "./components/MemoryMonitor";
+import BatteryMonitor from "./components/BatteryMonitor";
 
 function getSystemMetrics(): Promise<SystemMetrics> {
   return invoke<SystemMetrics>("get_system_metrics");
@@ -21,6 +23,7 @@ function App() {
     async function checkMetrics() {
       try {
         const result = await getSystemMetrics();
+
         if (active) {
           setLoading(false);
           setMetrics(result);
@@ -32,6 +35,7 @@ function App() {
           setLoading(false);
           setError("Unable to retrieve system metrics.");
         }
+
         if (active && !previouslyFailed) {
           console.error("Failed to retrieve metrics", error);
           previouslyFailed = true;
@@ -42,47 +46,47 @@ function App() {
         }
       }
     }
+
     void checkMetrics();
+
     return () => {
       active = false;
       clearTimeout(timerId);
     };
   }, []);
 
-  const memoryPercentage =
-    metrics && metrics.memoryTotal !== 0
-      ? (metrics.memoryUsed / metrics.memoryTotal) * 100
-      : 0;
-
   return (
     <main className="container">
-      <p>Mini System Monitor</p>
+      <header className="dashboard-header">
+        <h1>System Monitor</h1>
+        <span className="status-label">
+          {error ? "OFFLINE" : metrics ? "LIVE" : "CONNECTING"}
+        </span>
+      </header>
+
       {error && (
-        <>
+        <div className="error-message" role="alert">
           <p>{error}</p>
           {metrics && <p>Showing last successful readings.</p>}
-        </>
+        </div>
       )}
-      {metrics ? (
-        <>
-          <p>CPU: {metrics.cpuUsage.toFixed(1)}%</p>
-          <p>
-            MEMORY: {bytesToGiB(metrics.memoryUsed).toFixed(1)} /{" "}
-            {bytesToGiB(metrics.memoryTotal).toFixed(1)} GiB (
-            {memoryPercentage.toFixed(1)}%)
-          </p>
-          {metrics.battery ? (
-            <p>
-              BATTERY: {metrics.battery.percentage.toFixed(0)}% (
-              {metrics.battery.status})
-            </p>
-          ) : (
-            <p>BATTERY: Unavailable</p>
-          )}
-        </>
-      ) : (
-        loading && <p>Loading system metrics...</p>
-      )}
+
+      <div className="dashboard-content">
+        {metrics ? (
+          <>
+            <CpuMonitor usage={metrics.cpuUsage} />
+
+            <MemoryMonitor
+              usedMemory={metrics.memoryUsed}
+              totalMemory={metrics.memoryTotal}
+            />
+
+            <BatteryMonitor battery={metrics.battery} />
+          </>
+        ) : (
+          loading && <p>Loading system metrics...</p>
+        )}
+      </div>
     </main>
   );
 }
