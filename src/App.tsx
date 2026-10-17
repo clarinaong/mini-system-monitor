@@ -71,6 +71,14 @@ function App() {
             {bytesToGiB(metrics.memoryTotal).toFixed(1)} GiB (
             {memoryPercentage.toFixed(1)}%)
           </p>
+          {metrics.battery ? (
+            <p>
+              BATTERY: {metrics.battery.percentage.toFixed(0)}% (
+              {metrics.battery.status})
+            </p>
+          ) : (
+            <p>BATTERY: Unavailable</p>
+          )}
         </>
       ) : (
         loading && <p>Loading system metrics...</p>
