@@ -10,7 +10,7 @@ type Reading = {
 };
 
 const WIDTH = 300;
-const HEIGHT = 100;
+const HEIGHT = 60;
 const MAX_READINGS = 60;
 const SAMPLE_INTERVAL = 1000;
 const HISTORY_DURATION = MAX_READINGS * SAMPLE_INTERVAL;
@@ -147,11 +147,29 @@ function UsageGraph({ data }: UsageGraphProps) {
       role="img"
       aria-label="Recent system usage history"
     >
-      <line x1="0" y1="25" x2={WIDTH} y2="25" className="graph-gridline" />
+      <line
+        x1="0"
+        y1={HEIGHT * 0.25}
+        x2={WIDTH}
+        y2={HEIGHT * 0.25}
+        className="graph-gridline"
+      />
 
-      <line x1="0" y1="50" x2={WIDTH} y2="50" className="graph-gridline" />
+      <line
+        x1="0"
+        y1={HEIGHT * 0.5}
+        x2={WIDTH}
+        y2={HEIGHT * 0.5}
+        className="graph-gridline"
+      />
 
-      <line x1="0" y1="75" x2={WIDTH} y2="75" className="graph-gridline" />
+      <line
+        x1="0"
+        y1={HEIGHT * 0.75}
+        x2={WIDTH}
+        y2={HEIGHT * 0.75}
+        className="graph-gridline"
+      />
 
       <polyline
         ref={lineRef}

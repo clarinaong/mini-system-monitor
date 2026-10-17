@@ -3,6 +3,7 @@
 mod monitor;
 
 use monitor::{MonitorState, get_system_metrics};
+use tauri_plugin_window_state::StateFlags;
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -12,6 +13,11 @@ fn greet(name: &str) -> String {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(
+            tauri_plugin_window_state::Builder::new()
+                .with_state_flags(StateFlags::POSITION)
+                .build(),
+        )
         .manage(MonitorState::new())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![greet, get_system_metrics])

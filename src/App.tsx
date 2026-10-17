@@ -83,7 +83,7 @@ function App() {
       : "LIVE";
 
   return (
-    <main className="container">
+    <main className="container" data-tauri-drag-region>
       <header className="dashboard-header">
         <h1>System Monitor</h1>
 
