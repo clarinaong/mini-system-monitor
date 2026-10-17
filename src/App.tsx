@@ -1,49 +1,74 @@
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
+import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
+import type { SystemMetrics } from "./types/system";
+import { bytesToGiB } from "./utils/format";
+
+function getSystemMetrics(): Promise<SystemMetrics> {
+  return invoke<SystemMetrics>("get_system_metrics");
+}
 
 function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+  const [metrics, setMetrics] = useState<SystemMetrics | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
+  const refreshMetrics = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      // FOR TESTING
+      // await new Promise<void>((resolve) => {
+      //   setTimeout(resolve, 2000);
+      // });
+      const result = await getSystemMetrics();
+      setMetrics(result);
+    } catch (error) {
+      console.error("Backend error:", error);
+      setError("Unable to retrieve system metrics.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshMetrics();
+  }, [refreshMetrics]);
+
+  const memoryPercentage =
+    metrics && metrics.memoryTotal !== 0
+      ? (metrics.memoryUsed / metrics.memoryTotal) * 100
+      : 0;
+
+  function handleRefresh() {
+    void refreshMetrics();
   }
 
   return (
     <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
+      <p>Mini System Monitor</p>
+      {error && (
+        <>
+          <p>{error}</p>
+          {metrics && <p>Showing last successful readings.</p>}
+        </>
+      )}
+      {metrics ? (
+        <>
+          <p>CPU: {metrics.cpuUsage.toFixed(1)}%</p>
+          <p>
+            MEMORY: {bytesToGiB(metrics.memoryUsed).toFixed(1)} /{" "}
+            {bytesToGiB(metrics.memoryTotal).toFixed(1)} GiB (
+            {memoryPercentage.toFixed(1)}%)
+          </p>
+        </>
+      ) : (
+        loading && <p>Loading system metrics...</p>
+      )}
+      {loading && metrics !== null && <p>Refreshing system metrics...</p>}
+      <button onClick={handleRefresh} disabled={loading}>
+        {loading ? "Refreshing..." : "Refresh"}
+      </button>
     </main>
   );
 }
