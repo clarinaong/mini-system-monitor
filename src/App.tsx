@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 import type { SystemMetrics } from "./types/system";
@@ -13,36 +13,46 @@ function App() {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
-  const refreshMetrics = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      // FOR TESTING
-      // await new Promise<void>((resolve) => {
-      //   setTimeout(resolve, 2000);
-      // });
-      const result = await getSystemMetrics();
-      setMetrics(result);
-    } catch (error) {
-      console.error("Backend error:", error);
-      setError("Unable to retrieve system metrics.");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
-    void refreshMetrics();
-  }, [refreshMetrics]);
+    let timerId: ReturnType<typeof setTimeout>;
+    let active = true;
+    let previouslyFailed = false;
+
+    async function checkMetrics() {
+      try {
+        const result = await getSystemMetrics();
+        if (active) {
+          setLoading(false);
+          setMetrics(result);
+          setError(null);
+          previouslyFailed = false;
+        }
+      } catch (error) {
+        if (active) {
+          setLoading(false);
+          setError("Unable to retrieve system metrics.");
+        }
+        if (active && !previouslyFailed) {
+          console.error("Failed to retrieve metrics", error);
+          previouslyFailed = true;
+        }
+      } finally {
+        if (active) {
+          timerId = setTimeout(checkMetrics, 1000);
+        }
+      }
+    }
+    void checkMetrics();
+    return () => {
+      active = false;
+      clearTimeout(timerId);
+    };
+  }, []);
 
   const memoryPercentage =
     metrics && metrics.memoryTotal !== 0
       ? (metrics.memoryUsed / metrics.memoryTotal) * 100
       : 0;
-
-  function handleRefresh() {
-    void refreshMetrics();
-  }
 
   return (
     <main className="container">
@@ -65,10 +75,6 @@ function App() {
       ) : (
         loading && <p>Loading system metrics...</p>
       )}
-      {loading && metrics !== null && <p>Refreshing system metrics...</p>}
-      <button onClick={handleRefresh} disabled={loading}>
-        {loading ? "Refreshing..." : "Refresh"}
-      </button>
     </main>
   );
 }
