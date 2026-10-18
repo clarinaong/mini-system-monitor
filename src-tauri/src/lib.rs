@@ -1,4 +1,3 @@
-#[allow(dead_code, reason = "Live evaluator wiring belongs to M9.2")]
 mod alerts;
 mod monitor;
 mod settings;
@@ -36,12 +35,12 @@ pub fn run() {
         ])
         .setup(|app| {
             app.manage(SettingsState::load(app.handle()));
-            let interval = app
+            let settings = app
                 .state::<SettingsState>()
-                .monitoring_interval_seconds()
+                .current_settings()
                 .map_err(|error| error.to_string())?;
             app.manage(MonitorState::new());
-            app.state::<MonitorState>().start(app.handle(), interval)?;
+            app.state::<MonitorState>().start(app.handle(), &settings)?;
             #[cfg(target_os = "macos")]
             {
                 let window = app

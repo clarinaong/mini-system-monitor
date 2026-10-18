@@ -564,8 +564,8 @@ fn concurrent_saves_publish_in_persistence_order() {
 }
 
 #[test]
-fn only_successfully_persisted_intervals_reconfigure_the_existing_monitor() {
-    use crate::monitor::MonitorState;
+fn only_successfully_persisted_preferences_reconfigure_the_existing_monitor() {
+    use crate::monitor::{MonitorState, tests::assert_applied_preferences};
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("settings.json");
     let good_app = app(false);
@@ -578,7 +578,23 @@ fn only_successfully_persisted_intervals_reconfigure_the_existing_monitor() {
     .unwrap();
     assert_eq!(saved.monitoring_interval_seconds, 5);
     let monitor = good_app.state::<MonitorState>();
+    assert_applied_preferences(&monitor, &saved);
+    assert_eq!(
+        good_app
+            .state::<SettingsState>()
+            .current_settings()
+            .unwrap(),
+        saved
+    );
     assert_eq!(monitor.snapshot().unwrap().monitoring_interval_seconds, 5);
+
+    let mut invalid_alert = saved.clone();
+    invalid_alert.alerts.cpu.threshold_percent = 101;
+    assert!(
+        tauri::async_runtime::block_on(save_settings(good_app.handle().clone(), invalid_alert,))
+            .is_err()
+    );
+    assert_applied_preferences(&monitor, &saved);
     assert!(monitor.snapshot().unwrap().latest.is_none());
     let invalid = Settings {
         monitoring_interval_seconds: 3,
@@ -592,7 +608,10 @@ fn only_successfully_persisted_intervals_reconfigure_the_existing_monitor() {
     let failed_app = app(true);
     failed_app.manage(MonitorState::new());
     failed_app.manage(state(&failed_app, &path));
-    failed_app.state::<MonitorState>().set_interval(5).unwrap();
+    failed_app
+        .state::<MonitorState>()
+        .apply_settings(&saved)
+        .unwrap();
     assert!(
         tauri::async_runtime::block_on(save_settings(
             failed_app.handle().clone(),
@@ -600,6 +619,7 @@ fn only_successfully_persisted_intervals_reconfigure_the_existing_monitor() {
         ))
         .is_err()
     );
+    assert_applied_preferences(&failed_app.state::<MonitorState>(), &saved);
     assert_eq!(
         failed_app
             .state::<MonitorState>()
@@ -611,8 +631,8 @@ fn only_successfully_persisted_intervals_reconfigure_the_existing_monitor() {
 }
 
 #[test]
-fn recovering_a_preserved_file_applies_its_interval_without_starting_a_worker() {
-    use crate::monitor::MonitorState;
+fn recovering_a_preserved_file_applies_its_rules_without_starting_a_worker() {
+    use crate::monitor::{MonitorState, tests::assert_applied_preferences};
     let app = app(false);
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("settings.json");
@@ -623,6 +643,7 @@ fn recovering_a_preserved_file_applies_its_interval_without_starting_a_worker() 
     let recovered = tauri::async_runtime::block_on(get_settings(app.handle().clone())).unwrap();
     assert!(recovered.load_error.is_none());
     let monitor = app.state::<MonitorState>();
+    assert_applied_preferences(&monitor, &changed_settings());
     assert_eq!(monitor.snapshot().unwrap().monitoring_interval_seconds, 5);
     assert!(monitor.snapshot().unwrap().latest.is_none());
 }

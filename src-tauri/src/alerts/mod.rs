@@ -2,9 +2,13 @@ use crate::{
     monitor::{BatteryStatus, MetricsSample, SampleStatus},
     settings::{Settings, SettingsError},
 };
+use serde::Serialize;
 use std::time::Duration;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub const ALERT_ELIGIBLE_EVENT: &str = "alert-eligible";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub enum AlertRule {
     Cpu,
     Memory,
@@ -19,7 +23,8 @@ const RULES: [AlertRule; 4] = [
     AlertRule::BatteryCharging,
 ];
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EligibleAlert {
     pub rule: AlertRule,
     pub sample_sequence: u64,
@@ -137,12 +142,14 @@ impl<C: Fn() -> Duration> AlertEvaluator<C> {
         })
     }
 
-    pub fn update_settings(&mut self, settings: &Settings) -> Result<(), SettingsError> {
+    pub fn update_settings(&mut self, settings: &Settings) -> Result<bool, SettingsError> {
         settings.validate()?;
         let now = (self.clock)().max(self.last_now);
         let configs = rule_configs(settings);
         let cooldown = Duration::from_secs(settings.alerts.cooldown_seconds.into());
         let interval_ms = u64::from(settings.monitoring_interval_seconds) * 1000;
+        let changed =
+            configs != self.configs || cooldown != self.cooldown || interval_ms != self.interval_ms;
         for (index, state) in self.states.iter_mut().enumerate() {
             if configs[index] != self.configs[index] || cooldown != self.cooldown {
                 state.reset_configuration(now);
@@ -155,7 +162,7 @@ impl<C: Fn() -> Duration> AlertEvaluator<C> {
         self.interval_ms = interval_ms;
         self.cooldown = cooldown;
         self.last_now = now;
-        Ok(())
+        Ok(changed)
     }
 
     fn break_evidence(&mut self) {

@@ -1,6 +1,10 @@
 mod collector;
 mod sampler;
 
+use crate::{
+    alerts::{ALERT_ELIGIBLE_EVENT, AlertEvaluator, EligibleAlert},
+    settings::Settings,
+};
 use collector::HardwareCollector;
 use sampler::{RealClock, Sampler};
 use serde::Serialize;
@@ -106,6 +110,8 @@ impl MonitorSnapshot {
 struct Control {
     interval_seconds: u8,
     revision: u64,
+    evaluation_revision: u64,
+    evaluator: AlertEvaluator<Box<dyn Fn() -> std::time::Duration + Send>>,
     stopped: bool,
 }
 
@@ -123,12 +129,24 @@ pub struct MonitorState {
 
 impl MonitorState {
     pub fn new() -> Self {
+        let started = Instant::now();
+        Self::with_clock(started, move || started.elapsed())
+    }
+
+    fn with_clock(
+        started: Instant,
+        clock: impl Fn() -> std::time::Duration + Send + 'static,
+    ) -> Self {
+        let clock: Box<dyn Fn() -> std::time::Duration + Send> = Box::new(clock);
         Self {
             shared: Arc::new(Shared {
-                started: Instant::now(),
+                started,
                 control: Mutex::new(Control {
                     interval_seconds: 1,
                     revision: 0,
+                    evaluation_revision: 0,
+                    evaluator: AlertEvaluator::new(&Settings::default(), clock)
+                        .expect("Default preferences must be valid"),
                     stopped: false,
                 }),
                 wake: Condvar::new(),
@@ -141,26 +159,25 @@ impl MonitorState {
     pub fn start<R: Runtime>(
         &self,
         app: &AppHandle<R>,
-        interval_seconds: u8,
+        settings: &Settings,
     ) -> Result<bool, String> {
         let app = app.clone();
-        self.start_with(interval_seconds, move |shared| {
+        let interval_seconds = settings.monitoring_interval_seconds;
+        self.start_with(settings, move |shared| {
             let sampler = Sampler::new(
                 HardwareCollector::new(),
                 RealClock::new(shared.started),
                 interval_seconds,
             );
-            run_worker(shared, sampler, |sample| {
-                if let Err(error) = app.emit(METRICS_EVENT, sample) {
-                    eprintln!("Cannot deliver system metrics: {error}");
-                }
+            run_worker(shared, sampler, |sample, alerts| {
+                publish_events(&app, sample, alerts);
             });
         })
     }
 
     fn start_with(
         &self,
-        interval_seconds: u8,
+        settings: &Settings,
         run: impl FnOnce(Arc<Shared>) + Send + 'static,
     ) -> Result<bool, String> {
         let mut worker = self
@@ -170,7 +187,7 @@ impl MonitorState {
         if worker.is_some() {
             return Ok(false);
         }
-        self.set_interval(interval_seconds)?;
+        self.apply_settings(settings)?;
         let shared = Arc::clone(&self.shared);
         if shared
             .control
@@ -189,17 +206,23 @@ impl MonitorState {
         Ok(true)
     }
 
-    pub fn set_interval(&self, seconds: u8) -> Result<(), String> {
-        if ![1, 2, 5, 10].contains(&seconds) {
-            return Err("Invalid monitoring interval".into());
-        }
+    pub fn apply_settings(&self, settings: &Settings) -> Result<(), String> {
+        settings.validate().map_err(|error| error.to_string())?;
         let mut control = self
             .shared
             .control
             .lock()
             .map_err(|_| "Monitor control lock is unavailable")?;
-        if control.interval_seconds != seconds {
-            control.interval_seconds = seconds;
+        let changed = control
+            .evaluator
+            .update_settings(settings)
+            .map_err(|error| error.to_string())?;
+        if changed {
+            control.evaluation_revision += 1;
+            self.shared.wake.notify_one();
+        }
+        if control.interval_seconds != settings.monitoring_interval_seconds {
+            control.interval_seconds = settings.monitoring_interval_seconds;
             control.revision += 1;
             self.shared.wake.notify_one();
         }
@@ -238,10 +261,25 @@ impl MonitorState {
     }
 }
 
+fn publish_events<R: Runtime>(
+    app: &AppHandle<R>,
+    sample: &MetricsSample,
+    alerts: &[EligibleAlert],
+) {
+    if let Err(error) = app.emit(METRICS_EVENT, sample) {
+        eprintln!("Cannot deliver system metrics: {error}");
+    }
+    for alert in alerts {
+        if let Err(error) = app.emit(ALERT_ELIGIBLE_EVENT, alert) {
+            eprintln!("Cannot publish eligible alert: {error}");
+        }
+    }
+}
+
 fn run_worker<C: collector::Collector, K: sampler::Clock>(
     shared: Arc<Shared>,
     mut sampler: Sampler<C, K>,
-    publish: impl Fn(&MetricsSample),
+    publish: impl Fn(&MetricsSample, &[EligibleAlert]),
 ) {
     loop {
         let Ok(control) = shared.control.lock() else {
@@ -258,9 +296,10 @@ fn run_worker<C: collector::Collector, K: sampler::Clock>(
             }
             continue;
         }
+        let evaluation_revision = control.evaluation_revision;
         drop(control);
         if let Some(mut sample) = sampler.sample_due() {
-            let Ok(control) = shared.control.lock() else {
+            let Ok(mut control) = shared.control.lock() else {
                 break;
             };
             if control.stopped {
@@ -268,13 +307,19 @@ fn run_worker<C: collector::Collector, K: sampler::Clock>(
             }
             sample.config_revision = control.revision;
             sample.interval_ms = u64::from(control.interval_seconds) * 1000;
+            sampler.set_interval(control.interval_seconds);
+            let alerts = if evaluation_revision == control.evaluation_revision {
+                control.evaluator.evaluate(Some(&sample))
+            } else {
+                control.evaluator.evaluate(None)
+            };
             let Ok(mut cache) = shared.cache.lock() else {
                 break;
             };
             cache.record(sample.clone());
             drop(cache);
             drop(control);
-            publish(&sample);
+            publish(&sample, &alerts);
         }
     }
 }
@@ -293,4 +338,7 @@ pub fn get_system_metrics(
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
+
+#[cfg(test)]
+mod alert_tests;

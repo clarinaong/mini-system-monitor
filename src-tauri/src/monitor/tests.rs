@@ -11,6 +11,22 @@ use std::{
     time::Duration,
 };
 
+fn settings(interval: u8) -> Settings {
+    Settings {
+        monitoring_interval_seconds: interval,
+        ..Settings::default()
+    }
+}
+
+pub(crate) fn assert_applied_preferences(monitor: &MonitorState, expected: &Settings) {
+    let mut control = monitor.shared.control.lock().unwrap();
+    assert_eq!(
+        control.interval_seconds,
+        expected.monitoring_interval_seconds
+    );
+    assert!(!control.evaluator.update_settings(expected).unwrap());
+}
+
 #[derive(Clone, Default)]
 struct FakeClock {
     millis: Rc<Cell<u64>>,
@@ -271,7 +287,7 @@ fn one_worker_survives_multiple_cache_readers_and_window_creation() {
     let (started, received) = mpsc::channel();
     assert!(
         state
-            .start_with(5, move |shared| {
+            .start_with(&settings(5), move |shared| {
                 run_count.fetch_add(1, Ordering::SeqCst);
                 started.send(()).unwrap();
                 let mut control = shared.control.lock().unwrap();
@@ -291,7 +307,7 @@ fn one_worker_survives_multiple_cache_readers_and_window_creation() {
         }
         assert!(
             !state
-                .start_with(1, |_| panic!("A second worker must not start"))
+                .start_with(&settings(1), |_| panic!("A second worker must not start"))
                 .unwrap()
         );
     }
@@ -299,7 +315,7 @@ fn one_worker_survives_multiple_cache_readers_and_window_creation() {
     assert_eq!(state.snapshot().unwrap().monitoring_interval_seconds, 5);
     state.stop();
     state.stop();
-    assert!(state.start_with(1, |_| {}).is_err());
+    assert!(state.start_with(&settings(1), |_| {}).is_err());
 }
 
 #[test]
@@ -371,8 +387,8 @@ fn worker_caches_before_broadcast_and_recovers_for_multiple_subscribers() {
     let app_handle = app.handle().clone();
     let state = app.state::<MonitorState>();
     state
-        .start_with(1, move |shared| {
-            run_worker(shared, Sampler::new(collector, clock, 1), |sample| {
+        .start_with(&settings(1), move |shared| {
+            run_worker(shared, Sampler::new(collector, clock, 1), |sample, _| {
                 let cached = app_handle.state::<MonitorState>().snapshot().unwrap();
                 assert_eq!(cached.latest.unwrap().sequence, sample.sequence);
                 app_handle.emit(METRICS_EVENT, sample).unwrap();

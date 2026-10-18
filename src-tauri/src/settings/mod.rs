@@ -63,7 +63,6 @@ impl fmt::Display for SettingsError {
 pub struct SettingsSnapshot {
     pub settings: Settings,
     pub load_error: Option<SettingsError>,
-    /// Preferences are stored now; evaluation is M9 and delivery is M10.
     pub notification_delivery_available: bool,
 }
 
@@ -73,10 +72,10 @@ pub struct SettingsState {
 }
 
 impl SettingsState {
-    pub fn monitoring_interval_seconds(&self) -> Result<u8, SettingsError> {
+    pub fn current_settings(&self) -> Result<Settings, SettingsError> {
         self.snapshot
             .lock()
-            .map(|snapshot| snapshot.settings.monitoring_interval_seconds)
+            .map(|snapshot| snapshot.settings.clone())
             .map_err(|_| state_unavailable())
     }
 
@@ -120,7 +119,7 @@ impl SettingsState {
                 Ok(settings) => {
                     snapshot.settings = settings;
                     snapshot.load_error = None;
-                    apply_monitor_interval(app, snapshot.settings.monitoring_interval_seconds);
+                    apply_monitor_settings(app, &snapshot.settings);
                 }
                 Err(error) => snapshot.load_error = Some(error),
             }
@@ -144,17 +143,17 @@ impl SettingsState {
         persistence::write(app, path, &settings)?;
         snapshot.settings = settings.clone();
         snapshot.load_error = None;
-        apply_monitor_interval(app, settings.monitoring_interval_seconds);
+        apply_monitor_settings(app, &settings);
         publish(&settings);
         Ok(settings)
     }
 }
 
-fn apply_monitor_interval<R: Runtime>(app: &AppHandle<R>, seconds: u8) {
+fn apply_monitor_settings<R: Runtime>(app: &AppHandle<R>, settings: &Settings) {
     if let Some(monitor) = app.try_state::<crate::monitor::MonitorState>()
-        && let Err(error) = monitor.set_interval(seconds)
+        && let Err(error) = monitor.apply_settings(settings)
     {
-        eprintln!("Saved monitoring interval could not be applied: {error}");
+        eprintln!("Saved monitoring preferences could not be applied: {error}");
     }
 }
 
