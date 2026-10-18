@@ -7,25 +7,29 @@ use objc2_user_notifications::{
 };
 use std::{ptr::NonNull, sync::mpsc, time::Duration};
 
-pub fn submit_test() -> Result<(), NotificationError> {
+pub fn submit(message: &super::Message) -> Result<(), NotificationError> {
     let mut notification = notify_rust::Notification::new();
-    notification
-        .summary("Mini System Monitor")
-        .body("This is a silent test notification from Mini System Monitor.");
+    notification.summary(&message.title).body(&message.body);
+    if message.sound {
+        notification.sound_name("Basso");
+    }
     notification
         .show()
         .map(drop)
         .map_err(|error| NotificationError::new("submissionFailed", error.to_string()))
 }
 
-pub fn permission(identifier: &str) -> Result<Permission, NotificationError> {
+pub fn available(identifier: &str) -> bool {
     let bundle = NSBundle::mainBundle();
-    if tauri::is_dev()
-        || !bundle.bundlePath().to_string().ends_with(".app")
-        || bundle
+    !tauri::is_dev()
+        && bundle.bundlePath().to_string().ends_with(".app")
+        && bundle
             .bundleIdentifier()
-            .is_none_or(|value| value.to_string() != identifier)
-    {
+            .is_some_and(|value| value.to_string() == identifier)
+}
+
+pub fn permission(identifier: &str) -> Result<Permission, NotificationError> {
+    if !available(identifier) {
         return Ok(Permission::Unavailable);
     }
     let (sender, receiver) = mpsc::channel();
@@ -65,7 +69,7 @@ pub fn request_permission() -> Result<(), NotificationError> {
     });
     UNUserNotificationCenter::currentNotificationCenter()
         .requestAuthorizationWithOptions_completionHandler(
-            UNAuthorizationOptions::Alert,
+            UNAuthorizationOptions::Alert | UNAuthorizationOptions::Sound,
             &callback,
         );
     receiver.recv_timeout(Duration::from_secs(120)).map_err(|_| {

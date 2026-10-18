@@ -102,7 +102,7 @@ impl SettingsState {
             snapshot: Mutex::new(SettingsSnapshot {
                 settings,
                 load_error,
-                notification_delivery_available: false,
+                notification_delivery_available: crate::notifications::available(app),
             }),
         }
     }

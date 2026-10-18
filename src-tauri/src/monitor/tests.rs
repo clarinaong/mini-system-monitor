@@ -388,7 +388,7 @@ fn worker_caches_before_broadcast_and_recovers_for_multiple_subscribers() {
     let state = app.state::<MonitorState>();
     state
         .start_with(&settings(1), move |shared| {
-            run_worker(shared, Sampler::new(collector, clock, 1), |sample, _| {
+            run_worker(shared, Sampler::new(collector, clock, 1), |sample, _, _| {
                 let cached = app_handle.state::<MonitorState>().snapshot().unwrap();
                 assert_eq!(cached.latest.unwrap().sequence, sample.sequence);
                 app_handle.emit(METRICS_EVENT, sample).unwrap();
@@ -420,4 +420,32 @@ fn worker_caches_before_broadcast_and_recovers_for_multiple_subscribers() {
         assert_eq!(collections.load(Ordering::SeqCst), step + 1);
     }
     state.stop();
+}
+
+#[test]
+fn delivery_revision_rejects_changed_and_restored_rules_and_shutdown() {
+    let state = MonitorState::new();
+    let mut settings = Settings::default();
+    settings.alerts.enabled = true;
+    state.apply_settings(&settings).unwrap();
+    let revision = state.shared.control.lock().unwrap().evaluation_revision;
+    assert!(state.delivery_settings(revision).is_some());
+    settings.alerts.notification_sound = true;
+    state.apply_settings(&settings).unwrap();
+    assert!(
+        state
+            .delivery_settings(revision)
+            .unwrap()
+            .alerts
+            .notification_sound
+    );
+    settings.alerts.cpu.sustained_seconds += 1;
+    state.apply_settings(&settings).unwrap();
+    settings.alerts.cpu.sustained_seconds -= 1;
+    state.apply_settings(&settings).unwrap();
+    assert!(state.delivery_settings(revision).is_none());
+    let revision = state.shared.control.lock().unwrap().evaluation_revision;
+    assert!(state.delivery_settings(revision).is_some());
+    state.stop();
+    assert!(state.delivery_settings(revision).is_none());
 }

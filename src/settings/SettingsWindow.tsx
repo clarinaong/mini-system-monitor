@@ -149,13 +149,13 @@ function SettingsForm({ snapshot, loading, reload, acceptSaved }: FormProps) {
       </fieldset>
 
       <section className="settings-note" aria-label="Alert availability">
-        <strong>Automatic alert delivery is not available yet</strong>
-        <p>You can save alert preferences now. Automatic notifications and sounds are not available yet.</p>
+        <strong>{snapshot.notificationDeliveryAvailable ? "Automatic alert delivery is available" : "Automatic alert delivery requires a packaged macOS release app"}</strong>
+        <p>Saved rules run while the widget is hidden. Notifications require macOS permission; Focus and system notification settings may suppress banners and sounds. Missed alerts are not replayed.</p>
       </section>
       <NotificationPanel disabled={saving} />
       <fieldset disabled={saving}>
         <legend>Alert preferences</legend>
-        <Check label="Enable alerts when available" checked={draft.alerts.enabled} onChange={value => change(next => { next.alerts.enabled = value; })} />
+        <Check label="Enable alerts" checked={draft.alerts.enabled} onChange={value => change(next => { next.alerts.enabled = value; })} />
         <div className="settings-rule">
           <Check label="CPU usage alert" checked={draft.alerts.cpu.enabled} onChange={value => change(next => { next.alerts.cpu.enabled = value; })} />
           <div className="settings-numbers">
@@ -179,7 +179,7 @@ function SettingsForm({ snapshot, loading, reload, acceptSaved }: FormProps) {
           {field("batteryCharging", "Charging reminder threshold (%)", draft.alerts.batteryCharging.thresholdPercent, 1, 100, (next, value) => { next.alerts.batteryCharging.thresholdPercent = value; })}
         </div>
         {field("cooldown", "Cooldown seconds per rule", draft.alerts.cooldownSeconds, 1, 86400, (next, value) => { next.alerts.cooldownSeconds = value; })}
-        <Check label="Notification sound when available" checked={draft.alerts.notificationSound} onChange={value => change(next => { next.alerts.notificationSound = value; })} />
+        <Check label="Notification sound" checked={draft.alerts.notificationSound} onChange={value => change(next => { next.alerts.notificationSound = value; })} />
       </fieldset>
     </div>
     <footer className="settings-footer">

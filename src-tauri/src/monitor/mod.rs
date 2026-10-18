@@ -14,7 +14,7 @@ use std::{
     sync::{Arc, Condvar, Mutex},
     thread::{self, JoinHandle},
 };
-use tauri::{AppHandle, Emitter, Runtime};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 pub const METRICS_EVENT: &str = "system-metrics";
 pub const HISTORY_WINDOW_MS: u64 = 60_000;
@@ -113,6 +113,7 @@ struct Control {
     evaluation_revision: u64,
     evaluator: AlertEvaluator<Box<dyn Fn() -> std::time::Duration + Send>>,
     stopped: bool,
+    settings: Settings,
 }
 
 struct Shared {
@@ -148,6 +149,7 @@ impl MonitorState {
                     evaluator: AlertEvaluator::new(&Settings::default(), clock)
                         .expect("Default preferences must be valid"),
                     stopped: false,
+                    settings: Settings::default(),
                 }),
                 wake: Condvar::new(),
                 cache: Mutex::new(MonitorSnapshot::default()),
@@ -169,8 +171,8 @@ impl MonitorState {
                 RealClock::new(shared.started),
                 interval_seconds,
             );
-            run_worker(shared, sampler, |sample, alerts| {
-                publish_events(&app, sample, alerts);
+            run_worker(shared, sampler, |sample, alerts, revision| {
+                publish_events(&app, sample, alerts, revision);
             });
         })
     }
@@ -217,6 +219,7 @@ impl MonitorState {
             .evaluator
             .update_settings(settings)
             .map_err(|error| error.to_string())?;
+        control.settings = settings.clone();
         if changed {
             control.evaluation_revision += 1;
             self.shared.wake.notify_one();
@@ -227,6 +230,12 @@ impl MonitorState {
             self.shared.wake.notify_one();
         }
         Ok(())
+    }
+
+    pub(crate) fn delivery_settings(&self, revision: u64) -> Option<Settings> {
+        let control = self.shared.control.lock().ok()?;
+        (!control.stopped && control.evaluation_revision == revision)
+            .then(|| control.settings.clone())
     }
 
     pub fn snapshot(&self) -> Result<MonitorSnapshot, String> {
@@ -265,6 +274,7 @@ fn publish_events<R: Runtime>(
     app: &AppHandle<R>,
     sample: &MetricsSample,
     alerts: &[EligibleAlert],
+    revision: u64,
 ) {
     if let Err(error) = app.emit(METRICS_EVENT, sample) {
         eprintln!("Cannot deliver system metrics: {error}");
@@ -274,12 +284,17 @@ fn publish_events<R: Runtime>(
             eprintln!("Cannot publish eligible alert: {error}");
         }
     }
+    if !alerts.is_empty()
+        && let Some(notifications) = app.try_state::<crate::notifications::NotificationState>()
+    {
+        notifications.dispatch(app.clone(), alerts.to_vec(), revision);
+    }
 }
 
 fn run_worker<C: collector::Collector, K: sampler::Clock>(
     shared: Arc<Shared>,
     mut sampler: Sampler<C, K>,
-    publish: impl Fn(&MetricsSample, &[EligibleAlert]),
+    publish: impl Fn(&MetricsSample, &[EligibleAlert], u64),
 ) {
     loop {
         let Ok(control) = shared.control.lock() else {
@@ -319,7 +334,7 @@ fn run_worker<C: collector::Collector, K: sampler::Clock>(
             cache.record(sample.clone());
             drop(cache);
             drop(control);
-            publish(&sample, &alerts);
+            publish(&sample, &alerts, evaluation_revision);
         }
     }
 }

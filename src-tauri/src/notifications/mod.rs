@@ -1,11 +1,32 @@
+use crate::{
+    alerts::{AlertRule, EligibleAlert},
+    settings::Settings,
+};
 use serde::Serialize;
-use std::sync::Mutex;
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 use tauri::{AppHandle, Manager, Runtime, WebviewWindow};
 #[cfg(not(target_os = "macos"))]
 use tauri_plugin_notification::NotificationExt;
 
+mod delivery;
 #[cfg(target_os = "macos")]
 mod macos;
+use delivery::Message;
+
+pub(crate) fn available<R: Runtime>(app: &AppHandle<R>) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        macos::available(&app.config().identifier)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        false
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -58,10 +79,13 @@ impl NotificationError {
     }
 }
 
-pub(super) trait Backend: Send + Sync {
+trait Backend: Send + Sync {
     fn permission(&self) -> Result<Permission, NotificationError>;
     fn request_permission(&self) -> Result<(), NotificationError>;
-    fn submit_test(&self) -> Result<(), NotificationError>;
+    fn submit(&self, message: &Message) -> Result<(), NotificationError>;
+    fn submit_test(&self) -> Result<(), NotificationError> {
+        self.submit(&Message::test())
+    }
 }
 
 struct NativeBackend<R: Runtime> {
@@ -94,18 +118,18 @@ impl<R: Runtime> Backend for NativeBackend<R> {
         }
     }
 
-    fn submit_test(&self) -> Result<(), NotificationError> {
+    fn submit(&self, message: &Message) -> Result<(), NotificationError> {
         #[cfg(target_os = "macos")]
         {
-            macos::submit_test()
+            macos::submit(message)
         }
         #[cfg(not(target_os = "macos"))]
         {
             self.app
                 .notification()
                 .builder()
-                .title("Mini System Monitor")
-                .body("This is a silent test notification from Mini System Monitor.")
+                .title(&message.title)
+                .body(&message.body)
                 .show()
                 .map_err(|error| NotificationError::new("submissionFailed", error.to_string()))
         }
@@ -113,15 +137,17 @@ impl<R: Runtime> Backend for NativeBackend<R> {
 }
 
 pub struct NotificationState {
-    backend: Box<dyn Backend>,
-    operation: Mutex<()>,
+    backend: Arc<dyn Backend>,
+    operation: Arc<Mutex<()>>,
+    delivery_busy: Arc<AtomicBool>,
 }
 
 impl NotificationState {
     pub fn native<R: Runtime>(app: AppHandle<R>) -> Self {
         Self {
-            backend: Box::new(NativeBackend { app }),
-            operation: Mutex::new(()),
+            backend: Arc::new(NativeBackend { app }),
+            operation: Arc::new(Mutex::new(())),
+            delivery_busy: Arc::new(AtomicBool::new(false)),
         }
     }
 

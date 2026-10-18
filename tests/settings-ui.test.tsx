@@ -64,19 +64,30 @@ beforeEach(() => {
 });
 
 describe("Settings window", () => {
-  test("loads all preferences and clearly explains that alerts are unavailable", async () => {
+  test("loads preferences and explains packaged notification requirements", async () => {
     render(<SettingsWindow />);
     await loaded();
     expect(screen.getByLabelText("Refresh interval")).toHaveValue("1");
     expect(screen.getByLabelText("Show CPU")).toBeChecked();
     expect(screen.getByLabelText("Show memory graph")).toBeChecked();
     expect(screen.getByLabelText("Layout")).toHaveValue("expanded");
-    expect(screen.getByLabelText("Enable alerts when available")).not.toBeChecked();
+    expect(screen.getByLabelText("Enable alerts")).not.toBeChecked();
     expect(screen.getByLabelText("CPU threshold (%)")).toHaveValue(90);
     expect(screen.getByLabelText("Charging reminder threshold (%)")).toHaveValue(80);
-    expect(screen.getByText("Automatic alert delivery is not available yet")).toBeVisible();
+    expect(screen.getByText("Automatic alert delivery requires a packaged macOS release app")).toBeVisible();
     expect(screen.getByRole("button", { name: "Apply" })).toBeDisabled();
     expect(mocks.invoke).not.toHaveBeenCalledWith("get_system_metrics");
+  });
+
+  test("packaged delivery availability still requires saved switches and explicit permission", async () => {
+    persisted.notificationDeliveryAvailable = true;
+    render(<SettingsWindow />);
+    await loaded();
+    expect(screen.getByText("Automatic alert delivery is available")).toBeVisible();
+    expect(screen.getByLabelText("Enable alerts")).not.toBeChecked();
+    expect(screen.getByLabelText("Notification sound")).not.toBeChecked();
+    expect(mocks.invoke.mock.calls.map(call => call[0])).not.toContain("request_notification_permission");
+    expect(mocks.invoke.mock.calls.map(call => call[0])).not.toContain("send_test_notification");
   });
 
   test("edits remain a draft until Apply saves and returns authoritative settings", async () => {

@@ -145,10 +145,10 @@ impl WorkerRig {
                     run_worker(
                         shared,
                         Sampler::new(collector, clock, interval),
-                        |sample, alerts| {
+                        |sample, alerts, revision| {
                             let cached = shared_state.snapshot().unwrap();
                             assert_eq!(cached.latest.unwrap().sequence, sample.sequence);
-                            publish_events(&handle, sample, alerts);
+                            publish_events(&handle, sample, alerts, revision);
                             sender.send((sample.clone(), alerts.to_vec())).unwrap();
                         },
                     );

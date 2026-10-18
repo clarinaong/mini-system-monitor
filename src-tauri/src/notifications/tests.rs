@@ -47,7 +47,7 @@ impl Backend for Arc<FakeBackend> {
         *self.permission.lock().unwrap() = self.requested_permission;
         Ok(())
     }
-    fn submit_test(&self) -> Result<(), NotificationError> {
+    fn submit(&self, _: &Message) -> Result<(), NotificationError> {
         self.submissions.fetch_add(1, Ordering::SeqCst);
         if self.fail_submission {
             return Err(NotificationError::new(
@@ -61,8 +61,9 @@ impl Backend for Arc<FakeBackend> {
 
 fn state(backend: &Arc<FakeBackend>) -> NotificationState {
     NotificationState {
-        backend: Box::new(Arc::clone(backend)),
-        operation: Mutex::new(()),
+        backend: Arc::new(Arc::clone(backend)),
+        operation: Arc::new(Mutex::new(())),
+        delivery_busy: Arc::new(AtomicBool::new(false)),
     }
 }
 
