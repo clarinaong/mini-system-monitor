@@ -1,9 +1,14 @@
 mod alerts;
 mod monitor;
+mod notifications;
 mod settings;
 mod windows;
 
 use monitor::{MonitorState, get_system_metrics};
+use notifications::{
+    NotificationState, get_notification_status, request_notification_permission,
+    send_test_notification,
+};
 use settings::{SettingsState, get_settings, save_settings};
 use tauri::{
     Emitter, Manager,
@@ -20,6 +25,7 @@ use objc2_app_kit::{NSWindow, NSWindowCollectionBehavior};
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
+        .plugin(tauri_plugin_notification::init())
         .plugin(
             tauri_plugin_window_state::Builder::new()
                 .with_state_flags(StateFlags::POSITION)
@@ -31,9 +37,13 @@ pub fn run() {
             get_system_metrics,
             get_settings,
             save_settings,
-            resize_widget
+            resize_widget,
+            get_notification_status,
+            request_notification_permission,
+            send_test_notification
         ])
         .setup(|app| {
+            app.manage(NotificationState::native(app.handle().clone()));
             app.manage(SettingsState::load(app.handle()));
             let settings = app
                 .state::<SettingsState>()

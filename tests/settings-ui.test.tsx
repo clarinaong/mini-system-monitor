@@ -38,6 +38,7 @@ beforeEach(() => {
   persisted = settingsSnapshot();
   mocks.invoke.mockImplementation(async (command, args) => {
     if (command === "get_settings") return structuredClone(persisted);
+    if (command === "get_notification_status") return { permission: "unavailable", canRequest: false, canSendTest: false };
     if (command === "save_settings") {
       persisted = { settings: structuredClone(args.settings), loadError: null, notificationDeliveryAvailable: false };
       return structuredClone(args.settings);
@@ -73,7 +74,7 @@ describe("Settings window", () => {
     expect(screen.getByLabelText("Enable alerts when available")).not.toBeChecked();
     expect(screen.getByLabelText("CPU threshold (%)")).toHaveValue(90);
     expect(screen.getByLabelText("Charging reminder threshold (%)")).toHaveValue(80);
-    expect(screen.getByText("Alert delivery is not available yet")).toBeVisible();
+    expect(screen.getByText("Automatic alert delivery is not available yet")).toBeVisible();
     expect(screen.getByRole("button", { name: "Apply" })).toBeDisabled();
     expect(mocks.invoke).not.toHaveBeenCalledWith("get_system_metrics");
   });

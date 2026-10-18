@@ -5,6 +5,7 @@ import { useSettings } from "../hooks/useSettings";
 import type { Settings, SettingsSnapshot } from "../types/settings";
 import { settingsErrorMessage, validateSettings } from "./validation";
 import "./settings.css";
+import NotificationPanel from "./NotificationPanel";
 
 type CheckProps = { label: string; checked: boolean; onChange: (checked: boolean) => void };
 
@@ -148,9 +149,10 @@ function SettingsForm({ snapshot, loading, reload, acceptSaved }: FormProps) {
       </fieldset>
 
       <section className="settings-note" aria-label="Alert availability">
-        <strong>Alert delivery is not available yet</strong>
-        <p>You can save preferences for future alert support. No alerts, notifications, or sounds will be sent in this version.</p>
+        <strong>Automatic alert delivery is not available yet</strong>
+        <p>You can save alert preferences now. Automatic notifications and sounds are not available yet.</p>
       </section>
+      <NotificationPanel disabled={saving} />
       <fieldset disabled={saving}>
         <legend>Alert preferences</legend>
         <Check label="Enable alerts when available" checked={draft.alerts.enabled} onChange={value => change(next => { next.alerts.enabled = value; })} />
