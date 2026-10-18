@@ -7,6 +7,17 @@ use objc2_user_notifications::{
 };
 use std::{ptr::NonNull, sync::mpsc, time::Duration};
 
+pub fn submit_test() -> Result<(), NotificationError> {
+    let mut notification = notify_rust::Notification::new();
+    notification
+        .summary("Mini System Monitor")
+        .body("This is a silent test notification from Mini System Monitor.");
+    notification
+        .show()
+        .map(drop)
+        .map_err(|error| NotificationError::new("submissionFailed", error.to_string()))
+}
+
 pub fn permission(identifier: &str) -> Result<Permission, NotificationError> {
     let bundle = NSBundle::mainBundle();
     if tauri::is_dev()

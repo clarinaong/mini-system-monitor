@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:notification-test": "tauri build --bundles app --config src-tauri/tauri.notification-test.conf.json",
     "test:monitor": "node --experimental-strip-types --test tests/monitor.test.mjs",
     "test:ui": "vitest run",
     "preview": "vite preview",

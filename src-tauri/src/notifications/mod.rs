@@ -1,6 +1,7 @@
 use serde::Serialize;
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager, Runtime, WebviewWindow};
+#[cfg(not(target_os = "macos"))]
 use tauri_plugin_notification::NotificationExt;
 
 #[cfg(target_os = "macos")]
@@ -94,13 +95,20 @@ impl<R: Runtime> Backend for NativeBackend<R> {
     }
 
     fn submit_test(&self) -> Result<(), NotificationError> {
-        self.app
-            .notification()
-            .builder()
-            .title("Mini System Monitor")
-            .body("This is a silent test notification from Mini System Monitor.")
-            .show()
-            .map_err(|error| NotificationError::new("submissionFailed", error.to_string()))
+        #[cfg(target_os = "macos")]
+        {
+            macos::submit_test()
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            self.app
+                .notification()
+                .builder()
+                .title("Mini System Monitor")
+                .body("This is a silent test notification from Mini System Monitor.")
+                .show()
+                .map_err(|error| NotificationError::new("submissionFailed", error.to_string()))
+        }
     }
 }
 
