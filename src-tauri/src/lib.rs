@@ -1,5 +1,6 @@
 mod monitor;
 mod settings;
+mod windows;
 
 use monitor::{MonitorState, get_system_metrics};
 use settings::{SettingsState, get_settings, save_settings};
@@ -9,6 +10,7 @@ use tauri::{
     tray::TrayIconBuilder,
 };
 use tauri_plugin_window_state::StateFlags;
+use windows::resize_widget;
 
 #[cfg(target_os = "macos")]
 use objc2_app_kit::{NSWindow, NSWindowCollectionBehavior};
@@ -20,13 +22,15 @@ pub fn run() {
         .plugin(
             tauri_plugin_window_state::Builder::new()
                 .with_state_flags(StateFlags::POSITION)
+                .with_filter(|label| label == "main")
                 .build(),
         )
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             get_system_metrics,
             get_settings,
-            save_settings
+            save_settings,
+            resize_widget
         ])
         .setup(|app| {
             app.manage(SettingsState::load(app.handle()));
@@ -63,12 +67,15 @@ pub fn run() {
             let show_item = MenuItem::with_id(app, "show", "Show Widget", true, None::<&str>)?;
 
             let hide_item = MenuItem::with_id(app, "hide", "Hide Widget", true, None::<&str>)?;
+            let settings_item =
+                MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
 
             let quit_item =
                 MenuItem::with_id(app, "quit", "Quit Mini System Monitor", true, None::<&str>)?;
 
             // Combine the items into one menu
-            let menu = Menu::with_items(app, &[&show_item, &hide_item, &quit_item])?;
+            let menu =
+                Menu::with_items(app, &[&show_item, &hide_item, &settings_item, &quit_item])?;
 
             // Create the menu bar icon
             let tray_icon =
@@ -93,6 +100,12 @@ pub fn run() {
                             && window.hide().is_ok()
                         {
                             let _ = app.emit_to("main", "widget-visibility", false);
+                        }
+                    }
+
+                    "settings" => {
+                        if let Err(error) = windows::open_settings(app) {
+                            eprintln!("Unable to open Settings: {error}");
                         }
                     }
 

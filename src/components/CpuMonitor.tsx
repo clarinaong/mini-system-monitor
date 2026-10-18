@@ -6,9 +6,10 @@ type CpuMonitorProps = {
   history: GraphReading[];
   clock: MonitorClock;
   active: boolean;
+  showGraph: boolean;
 };
 
-function CpuMonitor({ usage, history, clock, active }: CpuMonitorProps) {
+function CpuMonitor({ usage, history, clock, active, showGraph }: CpuMonitorProps) {
   return (
     <section className="metric-section">
       <div className="metric-header">
@@ -16,7 +17,7 @@ function CpuMonitor({ usage, history, clock, active }: CpuMonitorProps) {
         <span className="metric-value">{usage === null ? "—" : `${usage.toFixed(1)}%`}</span>
       </div>
       {usage === null && <p className="metric-detail">Warming up CPU readings...</p>}
-      <UsageGraph data={history} clock={clock} active={active} />
+      {showGraph && <UsageGraph data={history} clock={clock} active={active} />}
     </section>
   );
 }
