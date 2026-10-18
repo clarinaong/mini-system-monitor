@@ -1,3 +1,5 @@
+#[allow(dead_code, reason = "Live evaluator wiring belongs to M9.2")]
+mod alerts;
 mod monitor;
 mod settings;
 mod windows;
