@@ -32,6 +32,12 @@ enum Reading {
     Low,
     Warmup,
     Failed,
+    Battery {
+        percentage: f32,
+        status: &'static str,
+    },
+    BatteryError,
+    Absent,
 }
 
 struct TestCollector {
@@ -60,14 +66,26 @@ impl Collector for TestCollector {
                     Reading::Low => Some(10.0),
                     _ => Some(95.0),
                 },
-                memory_used: 950,
+                memory_used: if matches!(reading, Reading::Low) {
+                    100
+                } else {
+                    950
+                },
                 memory_total: 1000,
-                battery: Some(BatteryMetrics {
-                    percentage: 10.0,
-                    status: "Discharging".into(),
-                }),
+                battery: match reading {
+                    Reading::BatteryError | Reading::Absent => None,
+                    Reading::Battery { percentage, status } => Some(BatteryMetrics {
+                        percentage,
+                        status: status.into(),
+                    }),
+                    _ => Some(BatteryMetrics {
+                        percentage: 10.0,
+                        status: "Discharging".into(),
+                    }),
+                },
             },
-            battery_error: None,
+            battery_error: matches!(reading, Reading::BatteryError)
+                .then(|| "Injected battery failure".into()),
         })
     }
 }
@@ -326,4 +344,230 @@ fn startup_battery_rules_and_disabled_defaults_use_loaded_settings() {
     assert_eq!(alerts.len(), 1);
     assert_eq!(alerts[0].rule, AlertRule::BatteryLow);
     assert!(enabled.step(1000).1.is_empty());
+}
+
+fn alert_rules(alerts: &[EligibleAlert]) -> Vec<AlertRule> {
+    alerts.iter().map(|alert| alert.rule).collect()
+}
+
+#[test]
+fn usage_duration_and_recovery_without_preference_edits_work_at_every_interval() {
+    for seconds in [1, 2, 5, 10] {
+        let mut settings = alert_settings();
+        settings.monitoring_interval_seconds = seconds;
+        settings.alerts.cpu.sustained_seconds = 3;
+        settings.alerts.memory.enabled = true;
+        settings.alerts.memory.sustained_seconds = 3;
+        settings.alerts.cooldown_seconds = 1;
+        let rig = WorkerRig::new(&settings);
+        assert!(rig.receive().1.is_empty());
+        let interval = u64::from(seconds) * 1000;
+        let duration = 3000_u64.div_ceil(interval) * interval;
+        for ms in (interval..=duration).step_by(interval as usize) {
+            let (sample, alerts) = rig.step(ms);
+            assert_eq!(sample.interval_ms, interval);
+            assert_eq!(
+                alert_rules(&alerts),
+                if ms == duration {
+                    vec![AlertRule::Cpu, AlertRule::Memory]
+                } else {
+                    vec![]
+                }
+            );
+        }
+        assert!(rig.step(duration + interval).1.is_empty());
+        *rig.reading.lock().unwrap() = Reading::Low;
+        assert!(rig.step(duration + 2 * interval).1.is_empty());
+        *rig.reading.lock().unwrap() = Reading::High;
+        let restarted_at = duration + 3 * interval;
+        assert!(rig.step(restarted_at).1.is_empty());
+        for elapsed in (interval..=duration).step_by(interval as usize) {
+            let alerts = rig.step(restarted_at + elapsed).1;
+            assert_eq!(
+                alert_rules(&alerts),
+                if elapsed == duration {
+                    vec![AlertRule::Cpu, AlertRule::Memory]
+                } else {
+                    vec![]
+                }
+            );
+        }
+        assert_eq!(
+            rig.state.shared.control.lock().unwrap().evaluation_revision,
+            1
+        );
+    }
+}
+
+#[test]
+fn long_sampling_gaps_restart_evidence_without_catchup_or_false_recovery() {
+    let rig = WorkerRig::new(&alert_settings());
+    rig.receive();
+    rig.step(1000);
+    let (sample, alerts) = rig.step(600_000);
+    assert_eq!(sample.sequence, 3);
+    assert!(alerts.is_empty());
+    assert_eq!(rig.calls.load(Ordering::SeqCst), 3);
+    assert_eq!(rig.state.snapshot().unwrap().history.len(), 1);
+    assert!(rig.step(601_000).1.is_empty());
+    assert_eq!(alert_rules(&rig.step(602_000).1), [AlertRule::Cpu]);
+    assert!(rig.step(1_200_000).1.is_empty());
+    assert!(rig.step(1_201_000).1.is_empty());
+    assert!(rig.step(1_202_000).1.is_empty());
+    *rig.reading.lock().unwrap() = Reading::Low;
+    assert!(rig.step(1_203_000).1.is_empty());
+    *rig.reading.lock().unwrap() = Reading::High;
+    assert!(rig.step(1_204_000).1.is_empty());
+    assert!(rig.step(1_205_000).1.is_empty());
+    assert_eq!(alert_rules(&rig.step(1_206_000).1), [AlertRule::Cpu]);
+}
+
+#[test]
+fn battery_transitions_failures_and_usage_rules_keep_independent_live_state() {
+    let mut settings = alert_settings();
+    settings.alerts.memory.enabled = true;
+    settings.alerts.memory.sustained_seconds = 2;
+    settings.alerts.battery_low.enabled = true;
+    settings.alerts.battery_charging.enabled = true;
+    let rig = WorkerRig::new(&settings);
+    assert_eq!(alert_rules(&rig.receive().1), [AlertRule::BatteryLow]);
+    let cases = [
+        (
+            1000,
+            Reading::Battery {
+                percentage: 80.0,
+                status: "Charging",
+            },
+            vec![AlertRule::BatteryCharging],
+        ),
+        (
+            2000,
+            Reading::Battery {
+                percentage: 100.0,
+                status: "Full",
+            },
+            vec![AlertRule::Cpu, AlertRule::Memory],
+        ),
+        (3000, Reading::Absent, vec![]),
+        (4000, Reading::BatteryError, vec![]),
+        (
+            5000,
+            Reading::Battery {
+                percentage: 90.0,
+                status: "Unknown",
+            },
+            vec![],
+        ),
+        (
+            6000,
+            Reading::Battery {
+                percentage: 90.0,
+                status: "Charging",
+            },
+            vec![],
+        ),
+        (
+            7000,
+            Reading::Battery {
+                percentage: 20.0,
+                status: "Discharging",
+            },
+            vec![AlertRule::BatteryLow],
+        ),
+        (
+            8000,
+            Reading::Battery {
+                percentage: 80.0,
+                status: "Charging",
+            },
+            vec![AlertRule::BatteryCharging],
+        ),
+    ];
+    for (ms, reading, expected) in cases {
+        *rig.reading.lock().unwrap() = reading;
+        let (sample, alerts) = rig.step(ms);
+        assert_eq!(alert_rules(&alerts), expected);
+        if ms == 3000 {
+            assert_eq!(sample.health.battery_status, BatteryStatus::Absent);
+        }
+        if ms == 4000 {
+            assert_eq!(sample.health.status, SampleStatus::Degraded);
+            assert_eq!(sample.health.battery_status, BatteryStatus::Error);
+        }
+        for alert in alerts {
+            let json = serde_json::to_value(&alert).unwrap();
+            let expected_name = match alert.rule {
+                AlertRule::Cpu => "cpu",
+                AlertRule::Memory => "memory",
+                AlertRule::BatteryLow => "batteryLow",
+                AlertRule::BatteryCharging => "batteryCharging",
+            };
+            assert_eq!(json["rule"], expected_name);
+        }
+    }
+}
+
+#[test]
+fn new_worker_session_clears_cooldown_and_requires_new_usage_evidence() {
+    let mut settings = alert_settings();
+    settings.alerts.battery_low.enabled = true;
+    {
+        let first = WorkerRig::new(&settings);
+        assert_eq!(alert_rules(&first.receive().1), [AlertRule::BatteryLow]);
+        assert!(first.step(1000).1.is_empty());
+        assert_eq!(alert_rules(&first.step(2000).1), [AlertRule::Cpu]);
+    }
+    let restarted = WorkerRig::new(&settings);
+    let (sample, alerts) = restarted.receive();
+    assert_eq!(sample.sequence, 1);
+    assert_eq!(sample.monotonic_ms, 0);
+    assert_eq!(alert_rules(&alerts), [AlertRule::BatteryLow]);
+    assert!(restarted.step(1000).1.is_empty());
+    assert_eq!(alert_rules(&restarted.step(2000).1), [AlertRule::Cpu]);
+    assert!(restarted.step(3000).1.is_empty());
+}
+
+#[test]
+fn disabling_and_reenabling_a_live_rule_preserves_its_cooldown() {
+    let mut settings = alert_settings();
+    settings.alerts.cpu.sustained_seconds = 1;
+    let rig = WorkerRig::new(&settings);
+    rig.receive();
+    assert_eq!(alert_rules(&rig.step(1000).1), [AlertRule::Cpu]);
+    settings.alerts.cpu.enabled = false;
+    rig.apply_at(1250, &settings);
+    assert!(rig.step(2000).1.is_empty());
+    settings.alerts.cpu.enabled = true;
+    rig.apply_at(2500, &settings);
+    for ms in [3000, 4000, 5000] {
+        assert!(rig.step(ms).1.is_empty());
+    }
+    assert_eq!(alert_rules(&rig.step(6000).1), [AlertRule::Cpu]);
+}
+
+#[test]
+fn stop_during_collection_discards_the_inflight_sample_and_eligibility() {
+    let rig = WorkerRig::new(&alert_settings());
+    rig.receive();
+    rig.step(1000);
+    rig.pause.store(true, Ordering::SeqCst);
+    rig.advance(2000);
+    rig.entered.recv_timeout(Duration::from_secs(5)).unwrap();
+    let state = Arc::clone(&rig.state);
+    let stop = std::thread::spawn(move || state.stop());
+    let control = rig.state.shared.control.lock().unwrap();
+    let (control, timeout) = rig
+        .state
+        .shared
+        .wake
+        .wait_timeout_while(control, Duration::from_secs(5), |control| !control.stopped)
+        .unwrap();
+    assert!(control.stopped);
+    assert!(!timeout.timed_out());
+    drop(control);
+    rig.release.send(()).unwrap();
+    stop.join().unwrap();
+    assert!(rig.published.try_recv().is_err());
+    assert_eq!(rig.state.snapshot().unwrap().latest.unwrap().sequence, 2);
+    assert_eq!(rig.calls.load(Ordering::SeqCst), 3);
 }
