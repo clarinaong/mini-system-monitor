@@ -1,10 +1,13 @@
-import type { BatteryMetrics } from "../types/system";
+import type { BatteryMetrics, MetricsSample } from "../types/system";
 
 type BatteryMonitorProps = {
   battery: BatteryMetrics | null;
+  health: MetricsSample["health"];
 };
 
-function BatteryMonitor({ battery }: BatteryMonitorProps) {
+function BatteryMonitor({ battery, health }: BatteryMonitorProps) {
+  const unavailableReason = health.batteryStatus === "absent" ? "No battery detected"
+    : health.batteryStatus === "error" ? "Unable to read battery" : "Unavailable";
   const percentage = battery
     ? Math.max(0, Math.min(100, battery.percentage))
     : 0;
@@ -27,7 +30,7 @@ function BatteryMonitor({ battery }: BatteryMonitorProps) {
         aria-valuemax={100}
         aria-valuenow={battery ? percentage : undefined}
         aria-valuetext={
-          battery ? `${percentage.toFixed(0)}%` : "Unavailable"
+          battery ? `${percentage.toFixed(0)}%` : unavailableReason
         }
       >
         <div
@@ -37,7 +40,7 @@ function BatteryMonitor({ battery }: BatteryMonitorProps) {
       </div>
 
       <p className="metric-detail">
-        {battery ? battery.status : "Unavailable"}
+        {battery ? battery.status : unavailableReason}
       </p>
     </section>
   );

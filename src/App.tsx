@@ -1,133 +1,69 @@
-import { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { useMemo } from "react";
 import "./App.css";
-import type { SystemMetrics } from "./types/system";
 import CpuMonitor from "./components/CpuMonitor";
 import MemoryMonitor from "./components/MemoryMonitor";
 import BatteryMonitor from "./components/BatteryMonitor";
-
-function getSystemMetrics(): Promise<SystemMetrics> {
-  return invoke<SystemMetrics>("get_system_metrics");
-}
+import { useSystemMetrics } from "./hooks/useSystemMetrics";
+import { graphReadings } from "./monitor/history";
 
 function App() {
-  const [metrics, setMetrics] = useState<SystemMetrics | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const [cpuHistory, setCpuHistory] = useState<number[]>([]);
-  const [memoryHistory, setMemoryHistory] = useState<number[]>([]);
-
-  useEffect(() => {
-    let timerId: ReturnType<typeof setTimeout>;
-    let active = true;
-    let previouslyFailed = false;
-
-    async function checkMetrics() {
-      try {
-        const result = await getSystemMetrics();
-
-        if (active) {
-          setLoading(false);
-          setMetrics(result);
-          setError(null);
-          previouslyFailed = false;
-
-          // Update CPU history
-          setCpuHistory((previous) => {
-            const updatedHistory = [...previous, result.cpuUsage];
-            return updatedHistory.slice(-60);
-          });
-
-          // Calculate memory usage percentage
-          const memoryPercentage =
-            result.memoryTotal !== 0
-              ? (result.memoryUsed / result.memoryTotal) * 100
-              : 0;
-
-          // Update RAM history
-          setMemoryHistory((previous) => {
-            const updatedHistory = [...previous, memoryPercentage];
-            return updatedHistory.slice(-60);
-          });
-        }
-      } catch (err) {
-        if (active) {
-          setLoading(false);
-          setError("Unable to retrieve system metrics.");
-
-          if (!previouslyFailed) {
-            console.error("Failed to retrieve metrics:", err);
-            previouslyFailed = true;
-          }
-        }
-      } finally {
-        if (active) {
-          timerId = setTimeout(checkMetrics, 1000);
-        }
-      }
-    }
-
-    void checkMetrics();
-
-    return () => {
-      active = false;
-      clearTimeout(timerId);
-    };
-  }, []);
-
-  const status = error
-    ? "OFFLINE"
-    : loading
-      ? "CONNECTING"
-      : "LIVE";
+  const { view, error, visible, stale } = useSystemMetrics();
+  const snapshot = view?.snapshot;
+  const latest = snapshot?.latest;
+  const successful = snapshot?.lastSuccessful;
+  const metrics = successful?.metrics;
+  const batteryHealth = latest?.metrics ? latest.health : successful?.health;
+  const cpuHistory = useMemo(
+    () => graphReadings(snapshot?.history ?? [], "cpu"), [snapshot?.history],
+  );
+  const memoryHistory = useMemo(
+    () => graphReadings(snapshot?.history ?? [], "memory"), [snapshot?.history],
+  );
+  const message = error ?? latest?.health.error ?? (
+    stale ? "System readings are delayed. Showing the last available readings." : null
+  );
+  const status = message ? "OFFLINE"
+    : !latest ? "CONNECTING"
+    : latest.health.batteryError ? "DEGRADED"
+    : metrics?.cpuUsage === null ? "WARMING UP"
+    : "LIVE";
 
   return (
     <main className="container" data-tauri-drag-region>
       <header className="dashboard-header">
         <h1>System Monitor</h1>
-
         <span
-          className={`status-label status-${status.toLowerCase()}`}
+          className={`status-label status-${status.toLowerCase().replace(/ /g, "-")}`}
           role="status"
         >
           {status}
         </span>
       </header>
-
-      {error && (
+      {message && (
         <div className="error-message" role="alert">
-          <p>{error}</p>
-
-          {metrics && (
-            <p>Showing last successful readings.</p>
-          )}
+          <p>{message}</p>
+          {metrics && latest?.health.status === "error" && <p>Showing last successful readings.</p>}
         </div>
       )}
-
       <div className="dashboard-content">
-        {metrics ? (
+        {metrics && view && batteryHealth ? (
           <>
             <CpuMonitor
               usage={metrics.cpuUsage}
               history={cpuHistory}
+              clock={view.clock}
+              active={visible}
             />
-
             <MemoryMonitor
               usedMemory={metrics.memoryUsed}
               totalMemory={metrics.memoryTotal}
               history={memoryHistory}
+              clock={view.clock}
+              active={visible}
             />
-
-            <BatteryMonitor battery={metrics.battery} />
+            <BatteryMonitor battery={metrics.battery} health={batteryHealth} />
           </>
-        ) : (
-          loading && (
-            <p className="loading-message">
-              Loading system metrics...
-            </p>
-          )
-        )}
+        ) : !message && <p className="loading-message">Loading system metrics...</p>}
       </div>
     </main>
   );

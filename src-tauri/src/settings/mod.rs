@@ -73,6 +73,13 @@ pub struct SettingsState {
 }
 
 impl SettingsState {
+    pub fn monitoring_interval_seconds(&self) -> Result<u8, SettingsError> {
+        self.snapshot
+            .lock()
+            .map(|snapshot| snapshot.settings.monitoring_interval_seconds)
+            .map_err(|_| state_unavailable())
+    }
+
     pub fn load<R: Runtime>(app: &AppHandle<R>) -> Self {
         let path = app
             .path()
@@ -113,6 +120,7 @@ impl SettingsState {
                 Ok(settings) => {
                     snapshot.settings = settings;
                     snapshot.load_error = None;
+                    apply_monitor_interval(app, snapshot.settings.monitoring_interval_seconds);
                 }
                 Err(error) => snapshot.load_error = Some(error),
             }
@@ -136,8 +144,17 @@ impl SettingsState {
         persistence::write(app, path, &settings)?;
         snapshot.settings = settings.clone();
         snapshot.load_error = None;
+        apply_monitor_interval(app, settings.monitoring_interval_seconds);
         publish(&settings);
         Ok(settings)
+    }
+}
+
+fn apply_monitor_interval<R: Runtime>(app: &AppHandle<R>, seconds: u8) {
+    if let Some(monitor) = app.try_state::<crate::monitor::MonitorState>()
+        && let Err(error) = monitor.set_interval(seconds)
+    {
+        eprintln!("Saved monitoring interval could not be applied: {error}");
     }
 }
 

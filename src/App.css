@@ -162,7 +162,7 @@ body {
   overflow: hidden;
 }
 
-.dashboard-content svg polyline {
+.dashboard-content svg path {
   vector-effect: non-scaling-stroke;
 }
 
@@ -200,6 +200,11 @@ body {
 }
 
 .status-connecting::before {
+  background-color: #d8ad68;
+}
+
+.status-warming-up::before,
+.status-degraded::before {
   background-color: #d8ad68;
 }
 

@@ -4,7 +4,7 @@ mod settings;
 use monitor::{MonitorState, get_system_metrics};
 use settings::{SettingsState, get_settings, save_settings};
 use tauri::{
-    Manager,
+    Emitter, Manager,
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
 };
@@ -22,7 +22,6 @@ pub fn run() {
                 .with_state_flags(StateFlags::POSITION)
                 .build(),
         )
-        .manage(MonitorState::new())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             get_system_metrics,
@@ -31,6 +30,12 @@ pub fn run() {
         ])
         .setup(|app| {
             app.manage(SettingsState::load(app.handle()));
+            let interval = app
+                .state::<SettingsState>()
+                .monitoring_interval_seconds()
+                .map_err(|error| error.to_string())?;
+            app.manage(MonitorState::new());
+            app.state::<MonitorState>().start(app.handle(), interval)?;
             #[cfg(target_os = "macos")]
             {
                 let window = app
@@ -76,14 +81,18 @@ pub fn run() {
                 .show_menu_on_left_click(true)
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "show" => {
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
+                        if let Some(window) = app.get_webview_window("main")
+                            && window.show().is_ok()
+                        {
+                            let _ = app.emit_to("main", "widget-visibility", true);
                         }
                     }
 
                     "hide" => {
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.hide();
+                        if let Some(window) = app.get_webview_window("main")
+                            && window.hide().is_ok()
+                        {
+                            let _ = app.emit_to("main", "widget-visibility", false);
                         }
                     }
 
@@ -101,6 +110,13 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit)
+                && let Some(monitor) = app.try_state::<MonitorState>()
+            {
+                monitor.stop();
+            }
+        });
 }

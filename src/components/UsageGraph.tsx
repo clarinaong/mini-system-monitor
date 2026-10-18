@@ -1,114 +1,45 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
+import type { GraphReading, MonitorClock } from "../types/system";
+import { graphPath, monitorNow } from "../monitor/history";
 
 type UsageGraphProps = {
-  data: number[];
-};
-
-type Reading = {
-  value: number;
-  time: number;
+  data: GraphReading[];
+  clock: MonitorClock;
+  active: boolean;
 };
 
 const WIDTH = 300;
 const HEIGHT = 60;
-const MAX_READINGS = 60;
-const SAMPLE_INTERVAL = 1000;
-const HISTORY_DURATION = MAX_READINGS * SAMPLE_INTERVAL;
-const FRAME_INTERVAL = 100; // 10 FPS
+const FRAME_INTERVAL = 100;
 
-function UsageGraph({ data }: UsageGraphProps) {
-  const lineRef = useRef<SVGPolylineElement>(null);
-  const readingsRef = useRef<Reading[]>([]);
-  const lastDataRef = useRef<number[] | null>(null);
+function UsageGraph({ data, clock, active }: UsageGraphProps) {
+  const pathRef = useRef<SVGPathElement>(null);
+  const readingsRef = useRef(data);
+  const clockRef = useRef(clock);
 
-  // Convert a percentage into an SVG Y coordinate.
-  function getY(value: number): number {
-    const percentage = Math.max(0, Math.min(100, value));
-
-    return HEIGHT - (percentage / 100) * HEIGHT;
-  }
-
-  // Draw the graph based on elapsed time.
   function draw(now: number) {
-    const line = lineRef.current;
-    if (!line) return;
-
-    const points = readingsRef.current
-      .map((reading) => {
-        const age = now - reading.time;
-
-        // Older readings move toward the left.
-        const x = WIDTH - (age / HISTORY_DURATION) * WIDTH;
-
-        const y = getY(reading.value);
-
-        return `${x},${y}`;
-      })
-      .join(" ");
-
-    line.setAttribute("points", points);
+    pathRef.current?.setAttribute("d", graphPath(readingsRef.current, monitorNow(clockRef.current, now), WIDTH, HEIGHT));
   }
 
-  // Store each new reading with its arrival time.
   useLayoutEffect(() => {
-    if (lastDataRef.current === data) return;
+    readingsRef.current = data;
+    clockRef.current = clock;
+    draw(performance.now());
+  }, [data, clock]);
 
-    lastDataRef.current = data;
-
-    if (data.length === 0) {
-      readingsRef.current = [];
-      draw(performance.now());
-      return;
-    }
-
-    const now = performance.now();
-
-    if (readingsRef.current.length === 0) {
-      // Initialize existing history if the component mounts
-      // after readings have already been collected.
-      readingsRef.current = data.map((value, index) => ({
-        value,
-        time: now - (data.length - 1 - index) * SAMPLE_INTERVAL,
-      }));
-    } else {
-      readingsRef.current.push({
-        value: data[data.length - 1],
-        time: now,
-      });
-    }
-
-    // Never store more than 60 readings.
-    readingsRef.current = readingsRef.current.slice(-MAX_READINGS);
-
-    draw(now);
-  }, [data]);
-
-  // Continuously move the graph between readings.
   useEffect(() => {
     let frameId: number | null = null;
     let timerId: ReturnType<typeof setTimeout> | null = null;
-
-    const motionPreference = window.matchMedia(
-      "(prefers-reduced-motion: reduce)",
-    );
+    const motionPreference = window.matchMedia("(prefers-reduced-motion: reduce)");
 
     function stopAnimation() {
-      if (frameId !== null) {
-        cancelAnimationFrame(frameId);
-        frameId = null;
-      }
-
-      if (timerId !== null) {
-        clearTimeout(timerId);
-        timerId = null;
-      }
+      if (frameId !== null) { cancelAnimationFrame(frameId); frameId = null; }
+      if (timerId !== null) { clearTimeout(timerId); timerId = null; }
     }
 
     function animate() {
       frameId = null;
-
       draw(performance.now());
-
       timerId = setTimeout(() => {
         timerId = null;
         frameId = requestAnimationFrame(animate);
@@ -117,69 +48,31 @@ function UsageGraph({ data }: UsageGraphProps) {
 
     function updateAnimation() {
       stopAnimation();
-
-      if (document.hidden || motionPreference.matches) {
-        draw(performance.now());
-        return;
+      draw(performance.now());
+      if (active && !document.hidden && !motionPreference.matches) {
+        frameId = requestAnimationFrame(animate);
       }
-
-      frameId = requestAnimationFrame(animate);
     }
 
     document.addEventListener("visibilitychange", updateAnimation);
     motionPreference.addEventListener("change", updateAnimation);
-
     updateAnimation();
 
     return () => {
       stopAnimation();
-
       document.removeEventListener("visibilitychange", updateAnimation);
-
       motionPreference.removeEventListener("change", updateAnimation);
     };
-  }, []);
+  }, [active]);
 
   return (
-    <svg
-      viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-      preserveAspectRatio="none"
-      role="img"
-      aria-label="Recent system usage history"
-    >
-      <line
-        x1="0"
-        y1={HEIGHT * 0.25}
-        x2={WIDTH}
-        y2={HEIGHT * 0.25}
-        className="graph-gridline"
-      />
-
-      <line
-        x1="0"
-        y1={HEIGHT * 0.5}
-        x2={WIDTH}
-        y2={HEIGHT * 0.5}
-        className="graph-gridline"
-      />
-
-      <line
-        x1="0"
-        y1={HEIGHT * 0.75}
-        x2={WIDTH}
-        y2={HEIGHT * 0.75}
-        className="graph-gridline"
-      />
-
-      <polyline
-        ref={lineRef}
-        points=""
-        fill="none"
-        stroke="#839bb5"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+    <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} preserveAspectRatio="none" role="img"
+      aria-label="System usage over the last 60 seconds">
+      <line x1="0" y1={HEIGHT * 0.25} x2={WIDTH} y2={HEIGHT * 0.25} className="graph-gridline" />
+      <line x1="0" y1={HEIGHT * 0.5} x2={WIDTH} y2={HEIGHT * 0.5} className="graph-gridline" />
+      <line x1="0" y1={HEIGHT * 0.75} x2={WIDTH} y2={HEIGHT * 0.75} className="graph-gridline" />
+      <path ref={pathRef} d="" fill="none" stroke="#839bb5" strokeWidth="2"
+        strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }

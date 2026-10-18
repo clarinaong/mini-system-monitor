@@ -562,3 +562,67 @@ fn concurrent_saves_publish_in_persistence_order() {
     );
     assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
 }
+
+#[test]
+fn only_successfully_persisted_intervals_reconfigure_the_existing_monitor() {
+    use crate::monitor::MonitorState;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.json");
+    let good_app = app(false);
+    good_app.manage(MonitorState::new());
+    good_app.manage(state(&good_app, &path));
+    let saved = tauri::async_runtime::block_on(save_settings(
+        good_app.handle().clone(),
+        changed_settings(),
+    ))
+    .unwrap();
+    assert_eq!(saved.monitoring_interval_seconds, 5);
+    let monitor = good_app.state::<MonitorState>();
+    assert_eq!(monitor.snapshot().unwrap().monitoring_interval_seconds, 5);
+    assert!(monitor.snapshot().unwrap().latest.is_none());
+    let invalid = Settings {
+        monitoring_interval_seconds: 3,
+        ..Settings::default()
+    };
+    assert!(
+        tauri::async_runtime::block_on(save_settings(good_app.handle().clone(), invalid)).is_err()
+    );
+    assert_eq!(monitor.snapshot().unwrap().monitoring_interval_seconds, 5);
+
+    let failed_app = app(true);
+    failed_app.manage(MonitorState::new());
+    failed_app.manage(state(&failed_app, &path));
+    failed_app.state::<MonitorState>().set_interval(5).unwrap();
+    assert!(
+        tauri::async_runtime::block_on(save_settings(
+            failed_app.handle().clone(),
+            Settings::default()
+        ))
+        .is_err()
+    );
+    assert_eq!(
+        failed_app
+            .state::<MonitorState>()
+            .snapshot()
+            .unwrap()
+            .monitoring_interval_seconds,
+        5
+    );
+}
+
+#[test]
+fn recovering_a_preserved_file_applies_its_interval_without_starting_a_worker() {
+    use crate::monitor::MonitorState;
+    let app = app(false);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.json");
+    fs::write(&path, b"corrupt").unwrap();
+    app.manage(MonitorState::new());
+    app.manage(state(&app, &path));
+    persistence::write(app.handle(), &path, &changed_settings()).unwrap();
+    let recovered = tauri::async_runtime::block_on(get_settings(app.handle().clone())).unwrap();
+    assert!(recovered.load_error.is_none());
+    let monitor = app.state::<MonitorState>();
+    assert_eq!(monitor.snapshot().unwrap().monitoring_interval_seconds, 5);
+    assert!(monitor.snapshot().unwrap().latest.is_none());
+}
