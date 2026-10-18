@@ -1,6 +1,8 @@
 mod monitor;
+mod settings;
 
 use monitor::{MonitorState, get_system_metrics};
+use settings::{SettingsState, get_settings, save_settings};
 use tauri::{
     Manager,
     menu::{Menu, MenuItem},
@@ -14,6 +16,7 @@ use objc2_app_kit::{NSWindow, NSWindowCollectionBehavior};
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(
             tauri_plugin_window_state::Builder::new()
                 .with_state_flags(StateFlags::POSITION)
@@ -21,8 +24,13 @@ pub fn run() {
         )
         .manage(MonitorState::new())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![get_system_metrics])
+        .invoke_handler(tauri::generate_handler![
+            get_system_metrics,
+            get_settings,
+            save_settings
+        ])
         .setup(|app| {
+            app.manage(SettingsState::load(app.handle()));
             #[cfg(target_os = "macos")]
             {
                 let window = app
