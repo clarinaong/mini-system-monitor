@@ -59,7 +59,7 @@ function App() {
       )}
       <div className="dashboard-content">
         {allHidden ? (
-          <p className="empty-widget">All metrics are hidden. Open Settings… from the menu bar to show them.</p>
+          <p className="empty-widget">All metrics are hidden. Open Settings from the menu bar to show them.</p>
         ) : metrics && view && batteryHealth && settings ? (
           <>
             {settings.visibleCards.cpu && <CpuMonitor

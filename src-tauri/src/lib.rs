@@ -87,8 +87,7 @@ pub fn run() {
             let show_item = MenuItem::with_id(app, "show", "Show Widget", true, None::<&str>)?;
 
             let hide_item = MenuItem::with_id(app, "hide", "Hide Widget", true, None::<&str>)?;
-            let settings_item =
-                MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
+            let settings_item = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
 
             let quit_item =
                 MenuItem::with_id(app, "quit", "Quit Mini System Monitor", true, None::<&str>)?;

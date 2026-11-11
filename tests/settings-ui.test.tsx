@@ -79,6 +79,29 @@ describe("Settings window", () => {
     expect(mocks.invoke).not.toHaveBeenCalledWith("get_system_metrics");
   });
 
+  test.each(["CPU", "memory"])("hiding the %s card disables and unchecks its graph control", async metric => {
+    const user = userEvent.setup();
+    render(<SettingsWindow />);
+    await loaded();
+    const card = screen.getByRole("checkbox", { name: `Show ${metric}` });
+    const graph = screen.getByRole("checkbox", { name: `Show ${metric} graph` });
+    const otherGraph = screen.getByRole("checkbox", { name: metric === "CPU" ? "Show memory graph" : "Show CPU graph" });
+    expect(graph).toBeChecked();
+    await user.click(card);
+    expect(graph).toBeDisabled();
+    expect(graph).not.toBeChecked();
+    expect(otherGraph).toBeEnabled();
+    expect(otherGraph).toBeChecked();
+    await user.click(graph);
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    await screen.findByText("Preferences saved.");
+    expect(graph).toBeDisabled();
+    expect(graph).not.toBeChecked();
+    await user.click(card);
+    expect(graph).toBeEnabled();
+    expect(graph).toBeChecked();
+  });
+
   test("packaged delivery availability still requires saved switches and explicit permission", async () => {
     persisted.notificationDeliveryAvailable = true;
     render(<SettingsWindow />);
@@ -271,7 +294,7 @@ describe("Widget preferences", () => {
     const expectedGraphs = Number(Boolean(mask & 1) && Boolean(graphs & 1)) + Number(Boolean(mask & 2) && Boolean(graphs & 2));
     expect(screen.queryAllByRole("img")).toHaveLength(expectedGraphs);
     expect(container.querySelector("main")).toHaveClass(`layout-${layout}`);
-    if (mask === 0) expect(screen.getByText(/All metrics are hidden/)).toBeVisible();
+    if (mask === 0) expect(screen.getByText("All metrics are hidden. Open Settings from the menu bar to show them.")).toBeVisible();
   });
 
   test("a saved event immediately updates the widget without polling settings", async () => {

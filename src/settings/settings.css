@@ -19,6 +19,7 @@ body.settings-window {
 .settings-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 10px; }
 .settings-check { display: flex; align-items: center; gap: 9px; line-height: 1.5; cursor: pointer; }
 .settings-check input { width: 16px; height: 16px; margin: 0; accent-color: #386286; }
+.settings-check:has(input:disabled) { color: #687383; cursor: default; }
 .settings-options { display: flex; flex-wrap: wrap; gap: 12px 18px; margin-bottom: 18px; }
 .settings-help { color: #687383; line-height: 1.5; margin: 12px 0 0; }
 .settings-note { background: #eaf0f5; color: #3a5268; padding: 14px 16px; border-radius: 8px; line-height: 1.5; margin-bottom: 20px; }

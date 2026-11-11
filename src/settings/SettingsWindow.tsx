@@ -8,10 +8,10 @@ import "./settings.css";
 import NotificationPanel from "./NotificationPanel";
 import ClearHistory from "./ClearHistory";
 
-type CheckProps = { label: string; checked: boolean; onChange: (checked: boolean) => void };
+type CheckProps = { label: string; checked: boolean; disabled?: boolean; onChange: (checked: boolean) => void };
 
-function Check({ label, checked, onChange }: CheckProps) {
-  return <label className="settings-check"><input type="checkbox" checked={checked}
+function Check({ label, checked, disabled, onChange }: CheckProps) {
+  return <label className="settings-check"><input type="checkbox" checked={checked} disabled={disabled}
     onChange={event => onChange(event.target.checked)} /><span>{label}</span></label>;
 }
 
@@ -138,8 +138,10 @@ function SettingsForm({ snapshot, loading, reload, acceptSaved }: FormProps) {
           <Check label="Show battery" checked={draft.visibleCards.battery} onChange={value => change(next => { next.visibleCards.battery = value; })} />
         </div>
         <div className="settings-options">
-          <Check label="Show CPU graph" checked={draft.graphs.cpu} onChange={value => change(next => { next.graphs.cpu = value; })} />
-          <Check label="Show memory graph" checked={draft.graphs.memory} onChange={value => change(next => { next.graphs.memory = value; })} />
+          <Check label="Show CPU graph" checked={draft.visibleCards.cpu && draft.graphs.cpu}
+            disabled={!draft.visibleCards.cpu} onChange={value => change(next => { next.graphs.cpu = value; })} />
+          <Check label="Show memory graph" checked={draft.visibleCards.memory && draft.graphs.memory}
+            disabled={!draft.visibleCards.memory} onChange={value => change(next => { next.graphs.memory = value; })} />
         </div>
         <label className="settings-row" htmlFor="layout"><span>Layout</span>
           <select id="layout" value={draft.layout} onChange={event => change(next => { next.layout = event.target.value as Settings["layout"]; })}>
