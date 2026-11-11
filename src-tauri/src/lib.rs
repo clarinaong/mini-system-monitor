@@ -1,4 +1,6 @@
 mod alerts;
+#[allow(dead_code, reason = "History recording integration starts in M11.2")]
+mod history;
 mod monitor;
 mod notifications;
 mod settings;
