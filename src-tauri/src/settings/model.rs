@@ -11,6 +11,7 @@ pub struct Settings {
     pub layout: Layout,
     pub graphs: GraphSettings,
     pub alerts: AlertSettings,
+    pub history: HistorySettings,
 }
 
 impl Default for Settings {
@@ -22,8 +23,15 @@ impl Default for Settings {
             layout: Layout::Expanded,
             graphs: GraphSettings::default(),
             alerts: AlertSettings::default(),
+            history: HistorySettings::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct HistorySettings {
+    pub recording_enabled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

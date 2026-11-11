@@ -6,6 +6,7 @@ import type { Settings, SettingsSnapshot } from "../types/settings";
 import { settingsErrorMessage, validateSettings } from "./validation";
 import "./settings.css";
 import NotificationPanel from "./NotificationPanel";
+import ClearHistory from "./ClearHistory";
 
 type CheckProps = { label: string; checked: boolean; onChange: (checked: boolean) => void };
 
@@ -146,6 +147,14 @@ function SettingsForm({ snapshot, loading, reload, acceptSaved }: FormProps) {
           </select>
         </label>
         <p className="settings-help">Card visibility affects the widget only. Graph preferences are kept when a card is hidden.</p>
+      </fieldset>
+
+      <fieldset disabled={saving}>
+        <legend>Performance history</legend>
+        <Check label="Record performance history" checked={draft.history.recordingEnabled}
+          onChange={value => change(next => { next.history.recordingEnabled = value; })} />
+        <p className="settings-help">When enabled, the app saves CPU, memory, and available battery readings on this Mac at most once every five seconds, even while the widget is hidden. Readings expire after seven days. Turning recording off keeps existing readings until they expire or you clear them.</p>
+        <ClearHistory recordingEnabled={snapshot.settings.history.recordingEnabled} />
       </fieldset>
 
       <section className="settings-note" aria-label="Alert availability">

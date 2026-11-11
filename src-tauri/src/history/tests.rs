@@ -228,7 +228,8 @@ fn failed_migration_rolls_back_tables_and_version_then_can_retry() {
     assert!(
         migrate(
             &mut connection,
-            "CREATE TABLE partial (value INTEGER); INVALID SQL;"
+            "CREATE TABLE partial (value INTEGER); INVALID SQL;",
+            true,
         )
         .is_err()
     );
@@ -251,7 +252,7 @@ fn failed_migration_rolls_back_tables_and_version_then_can_retry() {
     );
     let extra_schema = format!("{SCHEMA} CREATE TABLE unexpected(value INTEGER);");
     assert!(matches!(
-        migrate(&mut connection, &extra_schema),
+        migrate(&mut connection, &extra_schema, true),
         Err(HistoryError::InvalidSchema(_))
     ));
     assert_eq!(version(&connection), 0);

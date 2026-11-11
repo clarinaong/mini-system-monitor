@@ -372,6 +372,11 @@ fn worker_caches_before_broadcast_and_recovers_for_multiple_subscribers() {
 
     let app = mock_builder().build(mock_context(noop_assets())).unwrap();
     app.manage(MonitorState::new());
+    let directory = tempfile::tempdir().unwrap();
+    let bad_path = directory.path().join("history.sqlite3");
+    std::fs::write(&bad_path, b"Not a SQLite database").unwrap();
+    let history = HistoryState::at_path(bad_path.clone(), true).unwrap();
+    let recorder = history.recorder();
     let (sender, received) = mpsc::channel();
     for subscriber in ["widget", "other-window"] {
         let sender = sender.clone();
@@ -388,11 +393,16 @@ fn worker_caches_before_broadcast_and_recovers_for_multiple_subscribers() {
     let state = app.state::<MonitorState>();
     state
         .start_with(&settings(1), move |shared| {
-            run_worker(shared, Sampler::new(collector, clock, 1), |sample, _, _| {
-                let cached = app_handle.state::<MonitorState>().snapshot().unwrap();
-                assert_eq!(cached.latest.unwrap().sequence, sample.sequence);
-                app_handle.emit(METRICS_EVENT, sample).unwrap();
-            });
+            run_worker(
+                shared,
+                Sampler::new(collector, clock, 1),
+                Some(&recorder),
+                |sample, _, _| {
+                    let cached = app_handle.state::<MonitorState>().snapshot().unwrap();
+                    assert_eq!(cached.latest.unwrap().sequence, sample.sequence);
+                    app_handle.emit(METRICS_EVENT, sample).unwrap();
+                },
+            );
         })
         .unwrap();
     for step in 0..3 {
@@ -403,6 +413,7 @@ fn worker_caches_before_broadcast_and_recovers_for_multiple_subscribers() {
         }
         let first = received.recv_timeout(Duration::from_secs(2)).unwrap();
         let second = received.recv_timeout(Duration::from_secs(2)).unwrap();
+        history.wait_until_idle();
         assert_ne!(first.0, second.0);
         assert_eq!(first.1["sequence"], step + 1);
         assert_eq!(first.1, second.1);
@@ -420,6 +431,7 @@ fn worker_caches_before_broadcast_and_recovers_for_multiple_subscribers() {
         assert_eq!(collections.load(Ordering::SeqCst), step + 1);
     }
     state.stop();
+    assert_eq!(std::fs::read(bad_path).unwrap(), b"Not a SQLite database");
 }
 
 #[test]

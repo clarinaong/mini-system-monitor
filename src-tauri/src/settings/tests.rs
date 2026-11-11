@@ -41,6 +41,7 @@ fn changed_settings() -> Settings {
     settings.alerts.enabled = true;
     settings.alerts.cpu.threshold_percent = 75;
     settings.alerts.battery_charging.enabled = false;
+    settings.history.recording_enabled = true;
     settings
 }
 
@@ -71,7 +72,8 @@ fn defaults_and_camel_case_serialization_contract() {
             "batteryCharging": { "enabled": true, "thresholdPercent": 80 },
             "cooldownSeconds": 600,
             "notificationSound": false
-        }
+        },
+        "history": { "recordingEnabled": false }
     });
     assert_eq!(serde_json::to_value(&settings).unwrap(), expected);
     assert_eq!(
@@ -110,6 +112,7 @@ fn missing_top_level_and_nested_fields_receive_contextual_defaults() {
     assert_eq!(partial.alerts.battery_low.threshold_percent, 20);
     assert_eq!(partial.alerts.battery_charging.threshold_percent, 80);
     assert_eq!(partial.alerts.cooldown_seconds, 600);
+    assert!(!partial.history.recording_enabled);
     partial.validate().unwrap();
 }
 
@@ -124,6 +127,7 @@ fn invalid_json_types_and_unknown_fields_are_rejected() {
         json!({"unknownPreference": true}),
         json!({"alerts": {"batteryCharging": {"thresholdPercent": null}}}),
         json!({"alerts": {"cpu": {"thresholdPercent": 256}}}),
+        json!({"history": {"recordingEnabled": "true"}}),
     ] {
         assert!(
             serde_json::from_value::<Settings>(invalid.clone()).is_err(),
@@ -565,11 +569,14 @@ fn concurrent_saves_publish_in_persistence_order() {
 
 #[test]
 fn only_successfully_persisted_preferences_reconfigure_the_existing_monitor() {
+    use crate::history::HistoryState;
     use crate::monitor::{MonitorState, tests::assert_applied_preferences};
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("settings.json");
+    let history_path = dir.path().join("history.sqlite3");
     let good_app = app(false);
     good_app.manage(MonitorState::new());
+    good_app.manage(HistoryState::at_path(history_path.clone(), false).unwrap());
     good_app.manage(state(&good_app, &path));
     let saved = tauri::async_runtime::block_on(save_settings(
         good_app.handle().clone(),
@@ -578,6 +585,13 @@ fn only_successfully_persisted_preferences_reconfigure_the_existing_monitor() {
     .unwrap();
     assert_eq!(saved.monitoring_interval_seconds, 5);
     let monitor = good_app.state::<MonitorState>();
+    assert!(
+        good_app
+            .state::<HistoryState>()
+            .recorder()
+            .generation()
+            .is_some()
+    );
     assert_applied_preferences(&monitor, &saved);
     assert_eq!(
         good_app
@@ -607,6 +621,7 @@ fn only_successfully_persisted_preferences_reconfigure_the_existing_monitor() {
 
     let failed_app = app(true);
     failed_app.manage(MonitorState::new());
+    failed_app.manage(HistoryState::at_path(history_path.clone(), true).unwrap());
     failed_app.manage(state(&failed_app, &path));
     failed_app
         .state::<MonitorState>()
@@ -620,6 +635,14 @@ fn only_successfully_persisted_preferences_reconfigure_the_existing_monitor() {
         .is_err()
     );
     assert_applied_preferences(&failed_app.state::<MonitorState>(), &saved);
+    assert!(
+        failed_app
+            .state::<HistoryState>()
+            .recorder()
+            .generation()
+            .is_some()
+    );
+    assert!(!history_path.exists());
     assert_eq!(
         failed_app
             .state::<MonitorState>()
@@ -632,16 +655,26 @@ fn only_successfully_persisted_preferences_reconfigure_the_existing_monitor() {
 
 #[test]
 fn recovering_a_preserved_file_applies_its_rules_without_starting_a_worker() {
+    use crate::history::HistoryState;
     use crate::monitor::{MonitorState, tests::assert_applied_preferences};
     let app = app(false);
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("settings.json");
     fs::write(&path, b"corrupt").unwrap();
     app.manage(MonitorState::new());
+    let history_path = dir.path().join("history.sqlite3");
+    app.manage(HistoryState::at_path(history_path.clone(), false).unwrap());
     app.manage(state(&app, &path));
     persistence::write(app.handle(), &path, &changed_settings()).unwrap();
     let recovered = tauri::async_runtime::block_on(get_settings(app.handle().clone())).unwrap();
     assert!(recovered.load_error.is_none());
+    assert!(
+        app.state::<HistoryState>()
+            .recorder()
+            .generation()
+            .is_some()
+    );
+    assert!(!history_path.exists());
     let monitor = app.state::<MonitorState>();
     assert_applied_preferences(&monitor, &changed_settings());
     assert_eq!(monitor.snapshot().unwrap().monitoring_interval_seconds, 5);

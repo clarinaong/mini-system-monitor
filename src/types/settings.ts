@@ -4,6 +4,7 @@ export type Settings = {
   visibleCards: { cpu: boolean; memory: boolean; battery: boolean };
   layout: "expanded" | "compact";
   graphs: { cpu: boolean; memory: boolean };
+  history: { recordingEnabled: boolean };
   alerts: {
     enabled: boolean; // Master switch; false by default.
     cpu: UsageAlert;

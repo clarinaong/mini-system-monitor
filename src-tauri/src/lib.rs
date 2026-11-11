@@ -1,11 +1,11 @@
 mod alerts;
-#[allow(dead_code, reason = "History recording integration starts in M11.2")]
 mod history;
 mod monitor;
 mod notifications;
 mod settings;
 mod windows;
 
+use history::HistoryState;
 use monitor::{MonitorState, get_system_metrics};
 use notifications::{
     NotificationState, get_notification_status, request_notification_permission,
@@ -39,6 +39,7 @@ pub fn run() {
             get_system_metrics,
             get_settings,
             save_settings,
+            history::recorder::clear_history,
             resize_widget,
             get_notification_status,
             request_notification_permission,
@@ -51,6 +52,12 @@ pub fn run() {
                 .state::<SettingsState>()
                 .current_settings()
                 .map_err(|error| error.to_string())?;
+            match HistoryState::start(app.handle(), settings.history.recording_enabled) {
+                Ok(history) => {
+                    app.manage(history);
+                }
+                Err(error) => eprintln!("Could not start local history storage: {error}"),
+            }
             app.manage(MonitorState::new());
             app.state::<MonitorState>().start(app.handle(), &settings)?;
             #[cfg(target_os = "macos")]
@@ -139,10 +146,13 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
-            if matches!(event, tauri::RunEvent::Exit)
-                && let Some(monitor) = app.try_state::<MonitorState>()
-            {
-                monitor.stop();
+            if matches!(event, tauri::RunEvent::Exit) {
+                if let Some(monitor) = app.try_state::<MonitorState>() {
+                    monitor.stop();
+                }
+                if let Some(history) = app.try_state::<HistoryState>() {
+                    history.stop();
+                }
             }
         });
 }

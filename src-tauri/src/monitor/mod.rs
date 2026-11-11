@@ -3,6 +3,7 @@ mod sampler;
 
 use crate::{
     alerts::{ALERT_ELIGIBLE_EVENT, AlertEvaluator, EligibleAlert},
+    history::{HistoryRecorder, HistoryState},
     settings::Settings,
 };
 use collector::HardwareCollector;
@@ -164,6 +165,9 @@ impl MonitorState {
         settings: &Settings,
     ) -> Result<bool, String> {
         let app = app.clone();
+        let history = app
+            .try_state::<HistoryState>()
+            .map(|history| history.recorder());
         let interval_seconds = settings.monitoring_interval_seconds;
         self.start_with(settings, move |shared| {
             let sampler = Sampler::new(
@@ -171,9 +175,14 @@ impl MonitorState {
                 RealClock::new(shared.started),
                 interval_seconds,
             );
-            run_worker(shared, sampler, |sample, alerts, revision| {
-                publish_events(&app, sample, alerts, revision);
-            });
+            run_worker(
+                shared,
+                sampler,
+                history.as_ref(),
+                |sample, alerts, revision| {
+                    publish_events(&app, sample, alerts, revision);
+                },
+            );
         })
     }
 
@@ -294,6 +303,7 @@ fn publish_events<R: Runtime>(
 fn run_worker<C: collector::Collector, K: sampler::Clock>(
     shared: Arc<Shared>,
     mut sampler: Sampler<C, K>,
+    history: Option<&HistoryRecorder>,
     publish: impl Fn(&MetricsSample, &[EligibleAlert], u64),
 ) {
     loop {
@@ -313,7 +323,9 @@ fn run_worker<C: collector::Collector, K: sampler::Clock>(
         }
         let evaluation_revision = control.evaluation_revision;
         drop(control);
+        let recording_generation = history.and_then(HistoryRecorder::generation);
         if let Some(mut sample) = sampler.sample_due() {
+            let collection_interval_ms = sample.interval_ms;
             let Ok(mut control) = shared.control.lock() else {
                 break;
             };
@@ -334,6 +346,9 @@ fn run_worker<C: collector::Collector, K: sampler::Clock>(
             cache.record(sample.clone());
             drop(cache);
             drop(control);
+            if let (Some(history), Some(generation)) = (history, recording_generation) {
+                history.offer(generation, &sample, collection_interval_ms);
+            }
             publish(&sample, &alerts, evaluation_revision);
         }
     }

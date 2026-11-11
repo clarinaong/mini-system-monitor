@@ -145,6 +145,7 @@ impl WorkerRig {
                     run_worker(
                         shared,
                         Sampler::new(collector, clock, interval),
+                        None,
                         |sample, alerts, revision| {
                             let cached = shared_state.snapshot().unwrap();
                             assert_eq!(cached.latest.unwrap().sequence, sample.sequence);

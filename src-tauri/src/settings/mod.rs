@@ -150,6 +150,9 @@ impl SettingsState {
 }
 
 fn apply_monitor_settings<R: Runtime>(app: &AppHandle<R>, settings: &Settings) {
+    if let Some(history) = app.try_state::<crate::history::HistoryState>() {
+        history.set_enabled(settings.history.recording_enabled);
+    }
     if let Some(monitor) = app.try_state::<crate::monitor::MonitorState>()
         && let Err(error) = monitor.apply_settings(settings)
     {

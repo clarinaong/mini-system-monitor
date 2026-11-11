@@ -7,6 +7,7 @@ export function settingsFixture(): Settings {
     visibleCards: { cpu: true, memory: true, battery: true },
     layout: "expanded",
     graphs: { cpu: true, memory: true },
+    history: { recordingEnabled: false },
     alerts: {
       enabled: false,
       cpu: { enabled: true, thresholdPercent: 90, sustainedSeconds: 30 },

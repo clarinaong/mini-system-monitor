@@ -90,6 +90,58 @@ describe("Settings window", () => {
     expect(mocks.invoke.mock.calls.map(call => call[0])).not.toContain("send_test_notification");
   });
 
+  test("history recording defaults off and only changes after applying", async () => {
+    const user = userEvent.setup();
+    render(<SettingsWindow />);
+    await loaded();
+    const recording = screen.getByLabelText("Record performance history");
+    expect(recording).not.toBeChecked();
+    await user.click(recording);
+    expect(persisted.settings.history.recordingEnabled).toBe(false);
+    expect(saves()).toHaveLength(0);
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    await screen.findByText("Preferences saved.");
+    expect(persisted.settings.history.recordingEnabled).toBe(true);
+  });
+
+  test("clear history requires confirmation and runs independently of saving preferences", async () => {
+    const user = userEvent.setup();
+    render(<SettingsWindow />);
+    await loaded();
+    await user.click(screen.getByLabelText("Record performance history"));
+    await user.click(screen.getByRole("button", { name: "Clear history…" }));
+    await user.click(screen.getByRole("button", { name: "Keep history" }));
+    expect(mocks.invoke).not.toHaveBeenCalledWith("clear_history");
+    await user.click(screen.getByRole("button", { name: "Clear history…" }));
+    await user.click(screen.getByRole("button", { name: "Delete saved readings" }));
+    await screen.findByText("Performance history cleared.");
+    expect(mocks.invoke).toHaveBeenCalledWith("clear_history");
+    expect(saves()).toHaveLength(0);
+    expect(screen.getByLabelText("Record performance history")).toBeChecked();
+  });
+
+  test("a failed clear can be retried and a pending clear prevents duplicate requests", async () => {
+    const user = userEvent.setup();
+    const pending = deferred<void>();
+    mocks.invoke.mockImplementation(async command => {
+      if (command === "get_settings") return structuredClone(persisted);
+      if (command === "clear_history") return pending.promise;
+      return { permission: "unavailable", canRequest: false, canSendTest: false };
+    });
+    render(<SettingsWindow />);
+    await loaded();
+    await user.click(screen.getByRole("button", { name: "Clear history…" }));
+    await user.click(screen.getByRole("button", { name: "Delete saved readings" }));
+    expect(screen.getByRole("button", { name: "Clearing…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Keep history" })).toBeDisabled();
+    await act(async () => pending.reject("History is busy. Try again."));
+    expect(await screen.findByRole("alert")).toHaveTextContent("History is busy. Try again.");
+    mocks.invoke.mockResolvedValueOnce(undefined);
+    await user.click(screen.getByRole("button", { name: "Delete saved readings" }));
+    await screen.findByText("Performance history cleared.");
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "clear_history")).toHaveLength(2);
+  });
+
   test("edits remain a draft until Apply saves and returns authoritative settings", async () => {
     const user = userEvent.setup();
     render(<SettingsWindow />);
