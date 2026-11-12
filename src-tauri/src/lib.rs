@@ -43,6 +43,7 @@ pub fn run() {
             history::recorder::clear_history,
             history::recorder::query_history,
             history::recorder::query_incidents,
+            history::recorder::query_performance_summary,
             resize_widget,
             get_notification_status,
             request_notification_permission,

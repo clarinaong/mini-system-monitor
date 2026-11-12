@@ -1,7 +1,10 @@
 use super::{
     HistoryDatabase,
     incident_query::{IncidentQuery, IncidentRequest, SavedIncident},
-    query::{Query, QueryError, QueryRequest, QueryResult},
+    query::{
+        Query, QueryError, QueryRequest, QueryResult,
+        summary::{PerformanceSummary, SummaryQuery, SummaryRequest},
+    },
 };
 use crate::{incidents::IncidentTransition, monitor::MetricsSample};
 use std::{
@@ -23,6 +26,7 @@ const UNAVAILABLE: &str = "Local history storage is unavailable.";
 
 type ClearResult = Result<(), String>;
 type QueryReply = Result<QueryResult, QueryError>;
+type SummaryReply = Result<PerformanceSummary, QueryError>;
 type IncidentReply = Result<Vec<SavedIncident>, QueryError>;
 
 #[derive(Default)]
@@ -287,7 +291,21 @@ pub async fn query_incidents<R: Runtime>(
     response.recv().await.ok_or(QueryError::Unavailable)?
 }
 
+#[tauri::command]
+pub async fn query_performance_summary<R: Runtime>(
+    app: AppHandle<R>,
+    request: SummaryRequest,
+) -> SummaryReply {
+    let query = request.validate()?;
+    let mut response = app
+        .try_state::<HistoryState>()
+        .ok_or(QueryError::Unavailable)?
+        .queue_read(|reply| Read::Summary(query, reply))?;
+    response.recv().await.ok_or(QueryError::Unavailable)?
+}
+
 enum Read {
+    Summary(SummaryQuery, async_runtime::Sender<SummaryReply>),
     Metrics(Query, async_runtime::Sender<QueryReply>),
     Incidents(IncidentQuery, async_runtime::Sender<IncidentReply>),
 }
@@ -360,6 +378,13 @@ fn run(shared: &Shared, path: PathBuf) {
                 finish_read(shared, reply, result);
             }
             Work::Read(Read::Incidents(query, reply)) => {
+                let result = match &storage.database {
+                    Some(database) => query.run(database),
+                    None => query.read_existing(&storage.path),
+                };
+                finish_read(shared, reply, result);
+            }
+            Work::Read(Read::Summary(query, reply)) => {
                 let result = match &storage.database {
                     Some(database) => query.run(database),
                     None => query.read_existing(&storage.path),

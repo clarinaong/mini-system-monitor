@@ -272,6 +272,7 @@ fn history_command_is_lazy_and_reads_stored_rows_with_recording_off() {
         .invoke_handler(tauri::generate_handler![
             query_history,
             query_incidents,
+            query_performance_summary,
             clear_history
         ])
         .build(tauri::generate_context!(test = true))
@@ -320,6 +321,29 @@ fn history_command_is_lazy_and_reads_stored_rows_with_recording_off() {
     .deserialize::<serde_json::Value>()
     .unwrap();
     assert_eq!(incidents, serde_json::json!([]));
+    let summary_request = |boundary| {
+        serde_json::json!({
+            "request": {
+                "previous": {"startMs": boundary - 1, "endMs": boundary},
+                "current": {"startMs": boundary, "endMs": boundary + 1}
+            }
+        })
+    };
+    let summary = |boundary| {
+        invoke(
+            &window,
+            "query_performance_summary",
+            summary_request(boundary),
+        )
+        .unwrap()
+        .deserialize::<serde_json::Value>()
+        .unwrap()
+    };
+    let empty = summary(1_i64);
+    assert_eq!(empty["current"]["totalMinutes"], 1);
+    assert!(empty["current"]["cpu"]["averagePercent"].is_null());
+    assert_eq!(empty["current"]["cpu"]["coveragePercent"], 0.0);
+    assert_eq!(empty["cpuComparison"], "periodTooShort");
     assert!(!path.parent().unwrap().exists());
 
     let state = app.state::<HistoryState>();
@@ -378,7 +402,20 @@ fn history_command_is_lazy_and_reads_stored_rows_with_recording_off() {
     assert_eq!(incidents[0]["durationMs"], 5_000);
     assert_eq!(incidents[0]["endMs"], end.timestamp_ms);
 
+    let saved = summary(timestamp);
+    assert_eq!(saved["current"]["period"]["startMs"], timestamp);
+    assert_eq!(saved["current"]["cpu"]["peakPercent"], 25.0);
+    assert_eq!(saved["current"]["cpu"]["coveragePercent"], 100.0);
+    assert_eq!(saved["previous"]["cpu"]["coveragePercent"], 0.0);
+
     let settings = crate::windows::open_settings(app.handle()).unwrap();
+    let denial = invoke(
+        &settings,
+        "query_performance_summary",
+        summary_request(timestamp),
+    )
+    .unwrap_err();
+    assert!(denial.as_str().unwrap().contains("not allowed"));
     let denial = invoke(&settings, "query_incidents", incident_request).unwrap_err();
     assert!(denial.as_str().unwrap().contains("not allowed"));
     let denial = invoke(&window, "clear_history", serde_json::json!({})).unwrap_err();
@@ -399,6 +436,15 @@ fn query_mailbox_rejects_requests_while_waiting_and_running() {
             .validate()
             .unwrap()
     };
+    let summary_request = || {
+        serde_json::from_value::<SummaryRequest>(serde_json::json!({
+            "previous": {"startMs": 0, "endMs": 1},
+            "current": {"startMs": 1, "endMs": 2}
+        }))
+        .unwrap()
+        .validate()
+        .unwrap()
+    };
     let mut response = state
         .queue_read(|reply| Read::Metrics(request(), reply))
         .unwrap();
@@ -412,7 +458,7 @@ fn query_mailbox_rejects_requests_while_waiting_and_running() {
         panic!("expected queued query");
     };
     assert!(matches!(
-        state.queue_read(|reply| Read::Metrics(request(), reply)),
+        state.queue_read(|reply| Read::Summary(summary_request(), reply)),
         Err(QueryError::Busy)
     ));
     drop(reply);

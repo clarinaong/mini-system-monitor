@@ -1,3 +1,5 @@
+pub(super) mod summary;
+
 use super::{APPLICATION_ID, HistoryDatabase, HistoryError, SCHEMA_VERSION, validate_manifest};
 use rusqlite::{Connection, OpenFlags, Row, params};
 use serde::{Deserialize, Serialize};
