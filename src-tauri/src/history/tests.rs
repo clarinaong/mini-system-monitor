@@ -538,3 +538,134 @@ fn version_two_migration_preserves_existing_event_observations() {
         [(id, 100, Some(110), false), (id, 100, None, false)]
     );
 }
+
+#[test]
+#[ignore = "opt-in timing run; use cargo test --release -- --ignored --nocapture"]
+fn history_performance_baseline() {
+    use super::{
+        incident_query::IncidentRequest,
+        query::{QueryRequest, QueryResult, summary::SummaryRequest},
+    };
+    use serde_json::json;
+    use std::{hint::black_box, time::Instant};
+
+    const DAY: i64 = 86_400_000;
+    const SPACING: i64 = 5_000;
+    const RUNS: usize = 20;
+
+    fn measure(label: &str, mut operation: impl FnMut() -> usize) {
+        black_box(operation());
+        let mut elapsed = Vec::with_capacity(RUNS);
+        let mut bytes = 0;
+        for _ in 0..RUNS {
+            let start = Instant::now();
+            bytes = black_box(operation());
+            elapsed.push(start.elapsed().as_secs_f64() * 1_000.0);
+        }
+        elapsed.sort_by(f64::total_cmp);
+        let median = (elapsed[RUNS / 2 - 1] + elapsed[RUNS / 2]) / 2.0;
+        let p95 = elapsed[(RUNS * 95).div_ceil(100) - 1];
+        println!("{label}: median {median:.2} ms, p95 {p95:.2} ms, JSON {bytes} bytes");
+    }
+
+    for days in [1, 7] {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("history.sqlite3");
+        let database = HistoryDatabase::open(&path).unwrap();
+        let start = 7 * DAY;
+        let end = start + days * DAY;
+        let rows = (end - start) / SPACING;
+        let id = session(&database.connection, start);
+        database
+            .connection
+            .execute(
+                "WITH RECURSIVE series(n) AS (
+                SELECT 0 UNION ALL SELECT n + 1 FROM series WHERE n + 1 < ?1
+             )
+             INSERT INTO metric_samples(session_id, sequence, timestamp_ms, monotonic_ms,
+                interval_ms, cpu_percent, memory_used_bytes, memory_total_bytes, battery_percent,
+                battery_state, sample_status, battery_status)
+             SELECT ?2, n + 1, ?3 + n * ?4, n * ?4, ?4, 35.5, 8589934592, 17179869184,
+                75.0, 'Discharging', 'healthy', 'available' FROM series",
+                params![rows, id, start, SPACING],
+            )
+            .unwrap();
+        database.connection.execute(
+            "INSERT INTO performance_events(session_id, kind, start_sequence, start_ms, start_monotonic_ms,
+                detected_sequence, detected_ms, detected_monotonic_ms, interrupted)
+             SELECT session_id, 'cpuSpike', sequence, timestamp_ms, monotonic_ms,
+                sequence, timestamp_ms, monotonic_ms, 1 FROM metric_samples WHERE sequence % 720 = 1",
+            [],
+        ).unwrap();
+        let source_count: i64 = database
+            .connection
+            .query_row("SELECT count(*) FROM metric_samples", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(source_count, rows);
+        let size = path.metadata().unwrap().len();
+        println!("{days} day(s): {rows} samples, {size} SQLite bytes");
+
+        let metrics = |range_start, resolution| {
+            serde_json::from_value::<QueryRequest>(json!({
+                "startMs": range_start, "endMs": end, "resolution": resolution,
+            }))
+            .unwrap()
+            .validate()
+            .unwrap()
+        };
+        let raw = metrics(end - 3_600_000, "raw");
+        let averages = metrics(start, "minuteAverages");
+        let incidents = serde_json::from_value::<IncidentRequest>(json!({
+            "startMs": start, "endMs": end,
+        }))
+        .unwrap()
+        .validate()
+        .unwrap();
+        let summary = serde_json::from_value::<SummaryRequest>(json!({
+            "current": {"startMs": start, "endMs": end},
+            "previous": {"startMs": start - days * DAY, "endMs": start},
+        }))
+        .unwrap()
+        .validate()
+        .unwrap();
+
+        assert!(matches!(raw.run(&database).unwrap(), QueryResult::Raw(rows) if rows.len() == 720));
+        assert!(matches!(
+            averages.run(&database).unwrap(),
+            QueryResult::MinuteAverages(rows) if rows.len() == (days * 1_440) as usize
+        ));
+        assert_eq!(
+            incidents.run(&database).unwrap().len(),
+            (days * 24) as usize
+        );
+        let checked = serde_json::to_value(summary.run(&database).unwrap()).unwrap();
+        assert_eq!(checked["current"]["cpu"]["coveragePercent"], 100.0);
+        assert_eq!(checked["previous"]["cpu"]["coveragePercent"], 0.0);
+
+        measure("raw 1 hour", || {
+            serde_json::to_vec(&raw.run(&database).unwrap())
+                .unwrap()
+                .len()
+        });
+        measure("minute averages", || {
+            serde_json::to_vec(&averages.run(&database).unwrap())
+                .unwrap()
+                .len()
+        });
+        measure("incidents", || {
+            serde_json::to_vec(&incidents.run(&database).unwrap())
+                .unwrap()
+                .len()
+        });
+        measure("summary", || {
+            serde_json::to_vec(&summary.run(&database).unwrap())
+                .unwrap()
+                .len()
+        });
+        measure("cold summary", || {
+            serde_json::to_vec(&summary.read_existing(&path).unwrap())
+                .unwrap()
+                .len()
+        });
+    }
+}
