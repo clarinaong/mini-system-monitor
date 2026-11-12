@@ -10,7 +10,8 @@ use rusqlite::{Connection, OpenFlags, TransactionBehavior, params};
 use std::{fmt, path::Path, time::Duration};
 
 const APPLICATION_ID: i32 = 0x4d53_4d48;
-const SCHEMA_VERSION: i32 = 2;
+const SCHEMA_VERSION: i32 = 3;
+const INTERRUPTION_SCHEMA: &str = include_str!("schema_v3.sql");
 const EVENTS_SCHEMA: &str = include_str!("schema_v2.sql");
 const SCHEMA: &str = include_str!("schema.sql");
 
@@ -233,13 +234,12 @@ fn migrate(
             transaction.execute_batch(schema)?;
             transaction.pragma_update(None, "application_id", APPLICATION_ID)?;
             transaction.execute_batch(EVENTS_SCHEMA)?;
-            transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         }
         (APPLICATION_ID, 1) => {
             validate_manifest(&transaction, 1)?;
             transaction.execute_batch(EVENTS_SCHEMA)?;
-            transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         }
+        (APPLICATION_ID, 2) => validate_manifest(&transaction, 2)?,
         (APPLICATION_ID, SCHEMA_VERSION) => {}
         _ => {
             return Err(HistoryError::Incompatible {
@@ -247,6 +247,10 @@ fn migrate(
                 version,
             });
         }
+    }
+    if version < SCHEMA_VERSION {
+        transaction.execute_batch(INTERRUPTION_SCHEMA)?;
+        transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
     validate_schema(&transaction)?;
     transaction.commit()?;
@@ -268,8 +272,11 @@ fn validate_schema(connection: &Connection) -> Result<(), HistoryError> {
 fn validate_manifest(connection: &Connection, version: i32) -> Result<(), HistoryError> {
     let expected = Connection::open_in_memory()?;
     expected.execute_batch(SCHEMA)?;
-    if version == SCHEMA_VERSION {
+    if version >= 2 {
         expected.execute_batch(EVENTS_SCHEMA)?;
+    }
+    if version >= 3 {
+        expected.execute_batch(INTERRUPTION_SCHEMA)?;
     }
     let manifest =
         |database: &Connection| -> Result<Vec<(String, String, String)>, rusqlite::Error> {

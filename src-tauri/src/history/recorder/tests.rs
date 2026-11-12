@@ -184,6 +184,7 @@ fn existing_history_is_pruned_while_disabled_and_retains_the_cutoff() {
         path: path.clone(),
         database: None,
         session: None,
+        writer_lock: None,
     };
     storage.prune(None, 100).unwrap();
     assert_eq!(rows(&path), vec![(2, 2)]);
@@ -200,6 +201,7 @@ fn existing_history_is_pruned_while_disabled_and_retains_the_cutoff() {
         path: empty.clone(),
         database: None,
         session: None,
+        writer_lock: None,
     };
     assert!(storage.prune(None, 100).is_err());
     assert_eq!(fs::metadata(empty).unwrap().len(), 0);
@@ -374,4 +376,97 @@ fn event_mailbox_bounds_pending_writes_and_rejects_stale_generations() {
         pending.events.back(),
         Some(&(1, event(MAX_PENDING_EVENTS as u64)))
     );
+}
+
+#[test]
+fn restart_interrupts_only_unresolved_events_and_new_sessions_can_recover() {
+    use crate::incidents::IncidentKind;
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("history.sqlite3");
+    let start = (&sample(1, 0)).into();
+    let end = (&sample(2, 1000)).into();
+    let spike = IncidentTransition::Started {
+        kind: IncidentKind::CpuSpike,
+        start,
+        detected: start,
+    };
+    let recovery = IncidentTransition::Recovered {
+        kind: IncidentKind::CpuSpike,
+        start,
+        end,
+    };
+    let memory = IncidentTransition::Started {
+        kind: IncidentKind::MemoryJump,
+        start,
+        detected: start,
+    };
+    let open = |enabled| HistoryState::at_path(path.clone(), enabled).unwrap();
+    let read_events = || {
+        let database = Connection::open(&path).unwrap();
+        database
+            .prepare(
+                "SELECT session_id, kind, end_sequence, interrupted
+             FROM performance_events ORDER BY session_id, kind",
+            )
+            .unwrap()
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                    row.get::<_, bool>(3)?,
+                ))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+    };
+
+    let first = open(true);
+    first.recorder().offer_events(0, [spike, recovery, memory]);
+    first.wait_until_idle();
+    let existing = [
+        (1, "cpuSpike".into(), Some(2), false),
+        (1, "memoryJump".into(), None, false),
+    ];
+    assert_eq!(read_events(), existing);
+
+    let competing = open(false);
+    let mut response = competing
+        .queue_query(raw_request(0, 1).validate().unwrap())
+        .unwrap();
+    assert!(async_runtime::block_on(response.recv()).unwrap().is_ok());
+    assert_eq!(read_events(), existing);
+    competing.stop();
+    first.stop();
+
+    let restarted = open(false);
+    let mut response = restarted
+        .queue_query(raw_request(0, 1).validate().unwrap())
+        .unwrap();
+    assert!(async_runtime::block_on(response.recv()).unwrap().is_ok());
+    let interrupted = [
+        (1, "cpuSpike".into(), Some(2), false),
+        (1, "memoryJump".into(), None, true),
+    ];
+    assert_eq!(read_events(), interrupted);
+    restarted.set_enabled(true);
+    let recorder = restarted.recorder();
+    recorder.offer_events(recorder.generation().unwrap(), [spike, recovery]);
+    restarted.wait_until_idle();
+    let expected = [
+        interrupted[0].clone(),
+        interrupted[1].clone(),
+        (2, "cpuSpike".into(), Some(2), false),
+    ];
+    assert_eq!(read_events(), expected);
+    restarted.stop();
+
+    let restarted_again = open(false);
+    let mut response = restarted_again
+        .queue_query(raw_request(0, 1).validate().unwrap())
+        .unwrap();
+    assert!(async_runtime::block_on(response.recv()).unwrap().is_ok());
+    assert_eq!(read_events(), expected);
 }

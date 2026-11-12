@@ -208,7 +208,7 @@ impl Query {
         let application_id =
             transaction.pragma_query_value(None, "application_id", |row| row.get(0))?;
         let version = transaction.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if application_id != APPLICATION_ID || !matches!(version, 1 | SCHEMA_VERSION) {
+        if application_id != APPLICATION_ID || !(1..=SCHEMA_VERSION).contains(&version) {
             return Err(HistoryError::Incompatible {
                 application_id,
                 version,

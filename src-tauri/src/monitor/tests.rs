@@ -555,3 +555,52 @@ fn read_events(path: &std::path::Path) -> Vec<(i64, Option<i64>)> {
         .collect::<Result<Vec<_>, _>>()
         .unwrap()
 }
+
+#[test]
+fn persisted_incident_requires_continuous_evidence_before_start_and_recovery() {
+    use crate::history::HistoryState;
+
+    struct SustainedLoad;
+    impl Collector for SustainedLoad {
+        fn collect(&mut self, now: Duration) -> Result<CollectedMetrics, String> {
+            let cpu = if now.as_secs() < 70 { 95.0 } else { 20.0 };
+            Ok(CollectedMetrics {
+                metrics: SystemMetrics {
+                    cpu_usage: Some(cpu),
+                    memory_used: 10,
+                    memory_total: 20,
+                    battery: None,
+                },
+                battery_error: None,
+            })
+        }
+    }
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("history.sqlite3");
+    let history = HistoryState::at_path(path.clone(), true).unwrap();
+    let monitor = MonitorState::new();
+    monitor.apply_settings(&settings(10)).unwrap();
+    let clock = FakeClock::default();
+    let times = [0, 10, 30, 40, 50, 60, 70, 90, 100];
+    run_worker(
+        Arc::clone(&monitor.shared),
+        Sampler::new(SustainedLoad, clock.clone(), 10),
+        Some(&history.recorder()),
+        |sample, _, _| {
+            history.wait_until_idle();
+            match sample.sequence {
+                1..=5 => assert!(read_events(&path).is_empty()),
+                6..=8 => assert_eq!(read_events(&path), [(3, None)]),
+                9 => {
+                    assert_eq!(read_events(&path), [(3, Some(9))]);
+                    monitor.shared.control.lock().unwrap().stopped = true;
+                }
+                _ => unreachable!(),
+            }
+            if let Some(next) = times.get(sample.sequence as usize) {
+                clock.set(next * 1000);
+            }
+        },
+    );
+}

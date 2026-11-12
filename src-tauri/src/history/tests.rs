@@ -493,3 +493,48 @@ fn events_deduplicate_by_session_and_kind_and_prune_by_start_time() {
         0
     );
 }
+
+#[test]
+fn version_two_migration_preserves_existing_event_observations() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("history.sqlite3");
+    let connection = Connection::open(&path).unwrap();
+    connection.execute_batch(SCHEMA).unwrap();
+    connection.execute_batch(EVENTS_SCHEMA).unwrap();
+    connection
+        .pragma_update(None, "application_id", APPLICATION_ID)
+        .unwrap();
+    connection.pragma_update(None, "user_version", 2).unwrap();
+    let id = session(&connection, 100);
+    sample(&connection, id, 1, 100).unwrap();
+    connection
+        .execute(
+            "INSERT INTO performance_events VALUES
+         (?1, 'cpuSpike', 1, 100, 0, 1, 100, 0, 2, 110, 10),
+         (?1, 'memoryJump', 1, 100, 0, 1, 100, 0, NULL, NULL, NULL)",
+            [id],
+        )
+        .unwrap();
+    drop(connection);
+
+    let request: query::QueryRequest = serde_json::from_value(serde_json::json!({
+        "startMs": 100, "endMs": 101, "resolution": "raw",
+    }))
+    .unwrap();
+    let result = request.validate().unwrap().read_existing(&path).unwrap();
+    assert!(matches!(result, query::QueryResult::Raw(rows) if rows.len() == 1));
+    assert_eq!(version(&Connection::open(&path).unwrap()), 2);
+
+    let database = HistoryDatabase::open_existing(&path).unwrap();
+    assert_eq!(version(&database.connection), SCHEMA_VERSION);
+    let events = database.connection.prepare(
+        "SELECT session_id, start_ms, end_ms, interrupted FROM performance_events ORDER BY kind"
+    ).unwrap().query_map([], |row| Ok((
+        row.get::<_, i64>(0)?, row.get::<_, i64>(1)?,
+        row.get::<_, Option<i64>>(2)?, row.get::<_, bool>(3)?
+    ))).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
+    assert_eq!(
+        events,
+        [(id, 100, Some(110), false), (id, 100, None, false)]
+    );
+}

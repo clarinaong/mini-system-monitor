@@ -315,6 +315,7 @@ fn run(shared: &Shared, path: PathBuf) {
         path,
         database: None,
         session: None,
+        writer_lock: None,
     };
     let mut next_prune = Instant::now();
     let mut retry_at = next_prune;
@@ -374,15 +375,36 @@ struct Storage {
     path: PathBuf,
     database: Option<HistoryDatabase>,
     session: Option<(u64, i64)>,
+    writer_lock: Option<fs::File>,
 }
 
 impl Storage {
     fn open_existing(&mut self) -> Result<(), String> {
         if self.database.is_none() && self.path.try_exists().map_err(|error| error.to_string())? {
-            self.database = Some(
-                HistoryDatabase::open_existing(&self.path).map_err(|error| error.to_string())?,
-            );
+            self.attach_database(HistoryDatabase::open_existing)?;
         }
+        Ok(())
+    }
+
+    fn attach_database(
+        &mut self,
+        open: impl FnOnce(&Path) -> Result<HistoryDatabase, super::HistoryError>,
+    ) -> Result<(), String> {
+        let lock_path = self.path.with_extension("sqlite3.lock");
+        create_private_file(&lock_path).map_err(|error| error.to_string())?;
+        let lock = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&lock_path)
+            .map_err(|error| error.to_string())?;
+        lock.try_lock()
+            .map_err(|error| format!("Could not lock local history writer: {error}"))?;
+        let mut database = open(&self.path).map_err(|error| error.to_string())?;
+        database
+            .interrupt_open_events()
+            .map_err(|error| error.to_string())?;
+        self.database = Some(database);
+        self.writer_lock = Some(lock);
         Ok(())
     }
 
@@ -391,8 +413,7 @@ impl Storage {
             let parent = self.path.parent().ok_or(UNAVAILABLE)?;
             fs::create_dir_all(parent).map_err(|error| error.to_string())?;
             create_private_file(&self.path).map_err(|error| error.to_string())?;
-            self.database =
-                Some(HistoryDatabase::open(&self.path).map_err(|error| error.to_string())?);
+            self.attach_database(HistoryDatabase::open)?;
         }
         self.database.as_mut().ok_or_else(|| UNAVAILABLE.into())
     }

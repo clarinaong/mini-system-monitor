@@ -4,6 +4,15 @@ use super::{HistoryDatabase, HistoryError, session_for_write};
 use crate::incidents::{IncidentKind, IncidentTransition, Observation};
 
 impl HistoryDatabase {
+    pub(super) fn interrupt_open_events(&mut self) -> Result<(), HistoryError> {
+        self.connection.execute(
+            "UPDATE performance_events SET interrupted = 1
+             WHERE end_sequence IS NULL AND interrupted = 0",
+            [],
+        )?;
+        Ok(())
+    }
+
     pub(super) fn record_event(
         &mut self,
         session: Option<i64>,
@@ -47,7 +56,7 @@ impl HistoryDatabase {
                         "UPDATE performance_events
                          SET end_sequence = ?1, end_ms = ?2, end_monotonic_ms = ?3
                          WHERE session_id = ?4 AND kind = ?5 AND start_sequence = ?6
-                           AND end_sequence IS NULL",
+                           AND end_sequence IS NULL AND interrupted = 0",
                         params![
                             sequence,
                             timestamp,
