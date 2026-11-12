@@ -1,0 +1,25 @@
+[[permission]]
+identifier = "read-settings"
+description = "Read the current saved preferences."
+commands.allow = ["get_settings"]
+
+[[permission]]
+identifier = "monitor-widget"
+description = "Read the live metrics cache and resize the widget."
+commands.allow = ["get_system_metrics", "resize_widget"]
+
+[[permission]]
+identifier = "manage-settings"
+description = "Save preferences, clear history, and manage notifications."
+commands.allow = [
+    "save_settings",
+    "clear_history",
+    "get_notification_status",
+    "request_notification_permission",
+    "send_test_notification",
+]
+
+[[permission]]
+identifier = "read-history"
+description = "Query saved performance samples within a bounded time range."
+commands.allow = ["query_history"]

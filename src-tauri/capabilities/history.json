@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "history-window",
+  "description": "Read saved metrics and observe recording status",
+  "windows": ["history"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "read-settings",
+    "read-history"
+  ]
+}

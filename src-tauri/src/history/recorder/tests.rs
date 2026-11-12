@@ -267,29 +267,34 @@ fn raw_request(start: i64, end: i64) -> QueryRequest {
 #[test]
 fn history_command_is_lazy_and_reads_stored_rows_with_recording_off() {
     let app = mock_builder()
-        .invoke_handler(tauri::generate_handler![query_history])
-        .build(mock_context(noop_assets()))
+        .invoke_handler(tauri::generate_handler![query_history, clear_history])
+        .build(tauri::generate_context!(test = true))
         .unwrap();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("new").join("history.sqlite3");
     assert!(app.manage(HistoryState::at_path(path.clone(), false).unwrap()));
-    let window = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
-        .build()
-        .unwrap();
-    let query = |start, end| {
+    let window = crate::windows::open_history(app.handle()).unwrap();
+    let invoke = |window: &tauri::WebviewWindow<_>, cmd: &str, body| {
         tauri::test::get_ipc_response(
-            &window,
+            window,
             InvokeRequest {
-                cmd: "query_history".into(),
+                cmd: cmd.into(),
                 callback: CallbackFn(0),
                 error: CallbackFn(1),
                 url: "tauri://localhost".parse().unwrap(),
-                body: InvokeBody::Json(serde_json::json!({
-                    "request": {"startMs": start, "endMs": end, "resolution": "raw"}
-                })),
+                body: InvokeBody::Json(body),
                 headers: Default::default(),
                 invoke_key: tauri::test::INVOKE_KEY.to_string(),
             },
+        )
+    };
+    let query = |start, end, resolution| {
+        invoke(
+            &window,
+            "query_history",
+            serde_json::json!({
+                "request": {"startMs": start, "endMs": end, "resolution": resolution}
+            }),
         )
         .unwrap()
         .deserialize::<serde_json::Value>()
@@ -297,7 +302,7 @@ fn history_command_is_lazy_and_reads_stored_rows_with_recording_off() {
     };
 
     assert_eq!(
-        query(0, 1),
+        query(0, 1, "raw"),
         serde_json::json!({"resolution": "raw", "rows": []})
     );
     assert!(!path.parent().unwrap().exists());
@@ -311,13 +316,18 @@ fn history_command_is_lazy_and_reads_stored_rows_with_recording_off() {
     state.set_enabled(false);
 
     let timestamp = i64::try_from(sample.timestamp_ms).unwrap();
-    let result = query(timestamp, timestamp + 1);
+    let result = query(timestamp, timestamp + 1, "raw");
     assert_eq!(result["resolution"], "raw");
     assert_eq!(result["rows"].as_array().unwrap().len(), 1);
     assert_eq!(result["rows"][0]["sessionId"], 1);
     assert_eq!(result["rows"][0]["sequence"], 1);
     assert_eq!(result["rows"][0]["cpuPercent"], 25.0);
     assert!(result["rows"][0]["batteryPercent"].is_null());
+
+    let averages = query(timestamp, timestamp + 1, "minuteAverages");
+    assert_eq!(averages["rows"][0]["cpuPercent"]["average"], 25.0);
+    let denial = invoke(&window, "clear_history", serde_json::json!({})).unwrap_err();
+    assert!(denial.as_str().unwrap().contains("not allowed"));
 }
 
 #[test]
@@ -357,7 +367,9 @@ fn event_mailbox_bounds_pending_writes_and_rejects_stale_generations() {
         ..Shared::default()
     }));
     let event = |sequence| {
-        let start = (&sample(sequence, sequence * 1000)).into();
+        let mut metrics = sample(sequence, sequence * 1000);
+        metrics.timestamp_ms = metrics.monotonic_ms;
+        let start = (&metrics).into();
         IncidentTransition::Started {
             kind: IncidentKind::CpuSpike,
             start,

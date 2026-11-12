@@ -90,13 +90,22 @@ pub fn run() {
 
             let hide_item = MenuItem::with_id(app, "hide", "Hide Widget", true, None::<&str>)?;
             let settings_item = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
+            let history_item = MenuItem::with_id(app, "history", "History", true, None::<&str>)?;
 
             let quit_item =
                 MenuItem::with_id(app, "quit", "Quit Mini System Monitor", true, None::<&str>)?;
 
             // Combine the items into one menu
-            let menu =
-                Menu::with_items(app, &[&show_item, &hide_item, &settings_item, &quit_item])?;
+            let menu = Menu::with_items(
+                app,
+                &[
+                    &show_item,
+                    &hide_item,
+                    &settings_item,
+                    &history_item,
+                    &quit_item,
+                ],
+            )?;
 
             // Create the menu bar icon
             let tray_icon =
@@ -127,6 +136,12 @@ pub fn run() {
                     "settings" => {
                         if let Err(error) = windows::open_settings(app) {
                             eprintln!("Unable to open Settings: {error}");
+                        }
+                    }
+
+                    "history" => {
+                        if let Err(error) = windows::open_history(app) {
+                            eprintln!("Unable to open History: {error}");
                         }
                     }
 
