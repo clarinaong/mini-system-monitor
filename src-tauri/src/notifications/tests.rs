@@ -207,7 +207,7 @@ fn settings_commands_use_managed_mock_adapter_without_touching_the_os() {
 #[test]
 fn unbundled_test_process_does_not_claim_native_authorization() {
     assert_eq!(
-        macos::permission("com.minisystemmonitor").unwrap(),
+        macos::status("com.minisystemmonitor").unwrap().permission,
         Permission::Unavailable
     );
 }

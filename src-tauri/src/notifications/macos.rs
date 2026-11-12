@@ -1,4 +1,4 @@
-use super::{NotificationError, Permission};
+use super::{NotificationError, NotificationStatus, Permission};
 use block2::RcBlock;
 use objc2::{
     AnyThread, define_class,
@@ -8,8 +8,9 @@ use objc2::{
 use objc2_foundation::{NSBundle, NSError, NSObject, NSObjectProtocol, NSString, NSUUID};
 use objc2_user_notifications::{
     UNAuthorizationOptions, UNAuthorizationStatus, UNMutableNotificationContent, UNNotification,
-    UNNotificationPresentationOptions, UNNotificationRequest, UNNotificationSettings,
-    UNNotificationSound, UNUserNotificationCenter, UNUserNotificationCenterDelegate,
+    UNNotificationPresentationOptions, UNNotificationRequest, UNNotificationSetting,
+    UNNotificationSettings, UNNotificationSound, UNUserNotificationCenter,
+    UNUserNotificationCenterDelegate,
 };
 use std::{
     ptr::NonNull,
@@ -94,21 +95,27 @@ pub fn available(identifier: &str) -> bool {
             .is_some_and(|value| value.to_string() == identifier)
 }
 
-pub fn permission(identifier: &str) -> Result<Permission, NotificationError> {
+pub fn status(identifier: &str) -> Result<NotificationStatus, NotificationError> {
     if !available(identifier) {
-        return Ok(Permission::Unavailable);
+        return Ok(Permission::Unavailable.into());
     }
     let (sender, receiver) = mpsc::channel();
     let callback = RcBlock::new(move |settings: NonNull<UNNotificationSettings>| {
-        let status = unsafe { settings.as_ref() }.authorizationStatus();
-        let permission = match status {
+        let settings = unsafe { settings.as_ref() };
+        let permission = match settings.authorizationStatus() {
             UNAuthorizationStatus::NotDetermined => Permission::NotDetermined,
             UNAuthorizationStatus::Denied => Permission::Denied,
             UNAuthorizationStatus::Authorized => Permission::Authorized,
             UNAuthorizationStatus::Provisional => Permission::Provisional,
             _ => Permission::Unknown,
         };
-        let _ = sender.send(permission);
+        let mut status = NotificationStatus::from(permission);
+        status.sound_enabled = match settings.soundSetting() {
+            UNNotificationSetting::Enabled => Some(true),
+            UNNotificationSetting::Disabled => Some(false),
+            _ => None,
+        };
+        let _ = sender.send(status);
     });
     UNUserNotificationCenter::currentNotificationCenter()
         .getNotificationSettingsWithCompletionHandler(&callback);

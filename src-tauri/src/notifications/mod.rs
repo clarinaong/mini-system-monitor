@@ -51,6 +51,7 @@ pub struct NotificationStatus {
     permission: Permission,
     can_request: bool,
     can_send_test: bool,
+    sound_enabled: Option<bool>,
 }
 
 impl From<Permission> for NotificationStatus {
@@ -59,6 +60,7 @@ impl From<Permission> for NotificationStatus {
             permission,
             can_request: permission == Permission::NotDetermined,
             can_send_test: permission.allows_submission(),
+            sound_enabled: None,
         }
     }
 }
@@ -81,6 +83,9 @@ impl NotificationError {
 
 trait Backend: Send + Sync {
     fn permission(&self) -> Result<Permission, NotificationError>;
+    fn status(&self) -> Result<NotificationStatus, NotificationError> {
+        self.permission().map(Into::into)
+    }
     fn request_permission(&self) -> Result<(), NotificationError>;
     fn submit(&self, message: &Message) -> Result<(), NotificationError>;
     fn submit_test(&self) -> Result<(), NotificationError> {
@@ -96,11 +101,22 @@ impl<R: Runtime> Backend for NativeBackend<R> {
     fn permission(&self) -> Result<Permission, NotificationError> {
         #[cfg(target_os = "macos")]
         {
-            macos::permission(&self.app.config().identifier)
+            macos::status(&self.app.config().identifier).map(|status| status.permission)
         }
         #[cfg(not(target_os = "macos"))]
         {
             Ok(Permission::Unavailable)
+        }
+    }
+
+    fn status(&self) -> Result<NotificationStatus, NotificationError> {
+        #[cfg(target_os = "macos")]
+        {
+            macos::status(&self.app.config().identifier)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            self.permission().map(Into::into)
         }
     }
 
@@ -153,7 +169,7 @@ impl NotificationState {
 
     fn execute(&self, action: Action) -> Result<NotificationStatus, NotificationError> {
         if matches!(action, Action::Status) {
-            return self.backend.permission().map(Into::into);
+            return self.backend.status();
         }
         let _guard = self.operation.try_lock().map_err(|_| {
             NotificationError::new(
@@ -161,15 +177,16 @@ impl NotificationState {
                 "A notification operation is already in progress. Try again when it finishes.",
             )
         })?;
-        let permission = self.backend.permission()?;
+        let status = self.backend.status()?;
+        let permission = status.permission;
         match action {
-            Action::Status => Ok(permission.into()),
+            Action::Status => Ok(status),
             Action::Request => {
-                if permission == Permission::NotDetermined {
+                if status.can_request {
                     self.backend.request_permission()?;
-                    return self.backend.permission().map(Into::into);
+                    return self.backend.status();
                 }
-                Ok(permission.into())
+                Ok(status)
             }
             Action::Test => {
                 if !permission.allows_submission() {
@@ -179,7 +196,7 @@ impl NotificationState {
                     ));
                 }
                 self.backend.submit_test()?;
-                Ok(permission.into())
+                Ok(status)
             }
         }
     }
