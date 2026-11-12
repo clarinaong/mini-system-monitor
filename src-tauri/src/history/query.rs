@@ -5,7 +5,7 @@ use std::{path::Path, time::Duration};
 
 const MINUTE_MS: i64 = 60_000;
 const MAX_RAW_RANGE_MS: i64 = 60 * MINUTE_MS;
-const MAX_AVERAGE_RANGE_MS: i64 = 7 * 24 * 60 * MINUTE_MS;
+pub(super) const MAX_AVERAGE_RANGE_MS: i64 = 7 * 24 * 60 * MINUTE_MS;
 const MAX_RAW_ROWS: i64 = 1_024;
 const MAX_AVERAGE_SOURCE_ROWS: i64 = 150_000;
 const MAX_MINUTE_BUCKETS: usize = 10_081;
@@ -33,12 +33,7 @@ impl QueryRequest {
             Resolution::Raw => MAX_RAW_RANGE_MS,
             Resolution::MinuteAverages => MAX_AVERAGE_RANGE_MS,
         };
-        if self.start_ms < 0 || self.end_ms <= self.start_ms {
-            return Err(QueryError::InvalidRange);
-        }
-        if self.end_ms - self.start_ms > max_range {
-            return Err(QueryError::RangeTooWide);
-        }
+        validate_range(self.start_ms, self.end_ms, max_range)?;
         Ok(Query(self))
     }
 }
@@ -193,32 +188,7 @@ impl Query {
     }
 
     pub(super) fn read_existing(&self, path: &Path) -> Result<QueryResult, QueryError> {
-        if !path
-            .try_exists()
-            .map_err(|error| QueryError::Storage(error.to_string()))?
-        {
-            return Ok(self.empty());
-        }
-        let mut connection = Connection::open_with_flags(
-            path,
-            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        )?;
-        connection.busy_timeout(Duration::from_millis(100))?;
-        let transaction = connection.transaction()?;
-        let application_id =
-            transaction.pragma_query_value(None, "application_id", |row| row.get(0))?;
-        let version = transaction.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if application_id != APPLICATION_ID || !(1..=SCHEMA_VERSION).contains(&version) {
-            return Err(HistoryError::Incompatible {
-                application_id,
-                version,
-            }
-            .into());
-        }
-        validate_manifest(&transaction, version)?;
-        let result = self.read(&transaction)?;
-        transaction.commit()?;
-        Ok(result)
+        read_existing(path, self.empty(), |connection, _| self.read(connection))
     }
 
     fn read(&self, connection: &Connection) -> Result<QueryResult, QueryError> {
@@ -278,6 +248,49 @@ impl Query {
         }
         Ok(result)
     }
+}
+
+pub(super) fn read_existing<T>(
+    path: &Path,
+    empty: T,
+    read: impl FnOnce(&Connection, i32) -> Result<T, QueryError>,
+) -> Result<T, QueryError> {
+    if !path
+        .try_exists()
+        .map_err(|error| QueryError::Storage(error.to_string()))?
+    {
+        return Ok(empty);
+    }
+    let mut connection = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    connection.busy_timeout(Duration::from_millis(100))?;
+    let transaction = connection.transaction()?;
+    let application_id =
+        transaction.pragma_query_value(None, "application_id", |row| row.get(0))?;
+    let version = transaction.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    if application_id != APPLICATION_ID || !(1..=SCHEMA_VERSION).contains(&version) {
+        return Err(HistoryError::Incompatible {
+            application_id,
+            version,
+        }
+        .into());
+    }
+    validate_manifest(&transaction, version)?;
+    let result = read(&transaction, version)?;
+    transaction.commit()?;
+    Ok(result)
+}
+
+pub(super) fn validate_range(start_ms: i64, end_ms: i64, max_ms: i64) -> Result<(), QueryError> {
+    if start_ms < 0 || end_ms <= start_ms {
+        return Err(QueryError::InvalidRange);
+    }
+    if end_ms - start_ms > max_ms {
+        return Err(QueryError::RangeTooWide);
+    }
+    Ok(())
 }
 
 #[cfg(test)]

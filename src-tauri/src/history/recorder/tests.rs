@@ -267,7 +267,11 @@ fn raw_request(start: i64, end: i64) -> QueryRequest {
 #[test]
 fn history_command_is_lazy_and_reads_stored_rows_with_recording_off() {
     let app = mock_builder()
-        .invoke_handler(tauri::generate_handler![query_history, clear_history])
+        .invoke_handler(tauri::generate_handler![
+            query_history,
+            query_incidents,
+            clear_history
+        ])
         .build(tauri::generate_context!(test = true))
         .unwrap();
     let directory = tempfile::tempdir().unwrap();
@@ -305,6 +309,15 @@ fn history_command_is_lazy_and_reads_stored_rows_with_recording_off() {
         query(0, 1, "raw"),
         serde_json::json!({"resolution": "raw", "rows": []})
     );
+    let incidents = invoke(
+        &window,
+        "query_incidents",
+        serde_json::json!({"request": {"startMs": 0, "endMs": 1}}),
+    )
+    .unwrap()
+    .deserialize::<serde_json::Value>()
+    .unwrap();
+    assert_eq!(incidents, serde_json::json!([]));
     assert!(!path.parent().unwrap().exists());
 
     let state = app.state::<HistoryState>();
@@ -338,16 +351,26 @@ fn query_mailbox_rejects_requests_while_waiting_and_running() {
         worker: Mutex::new(None),
     };
     let request = || raw_request(0, 1).validate().unwrap();
-    let mut response = state.queue_query(request()).unwrap();
+    let incident_request = || {
+        serde_json::from_value::<IncidentRequest>(serde_json::json!({"startMs": 0, "endMs": 1}))
+            .unwrap()
+            .validate()
+            .unwrap()
+    };
+    let mut response = state
+        .queue_read(|reply| Read::Metrics(request(), reply))
+        .unwrap();
     assert!(matches!(
-        state.queue_query(request()),
+        state.queue_read(|reply| Read::Incidents(incident_request(), reply)),
         Err(QueryError::Busy)
     ));
-    let Some(Work::Query(_, reply)) = next_work(&shared, Instant::now() + PRUNE_INTERVAL) else {
+    let Some(Work::Read(Read::Metrics(_, reply))) =
+        next_work(&shared, Instant::now() + PRUNE_INTERVAL)
+    else {
         panic!("expected queued query");
     };
     assert!(matches!(
-        state.queue_query(request()),
+        state.queue_read(|reply| Read::Metrics(request(), reply)),
         Err(QueryError::Busy)
     ));
     drop(reply);
@@ -446,7 +469,7 @@ fn restart_interrupts_only_unresolved_events_and_new_sessions_can_recover() {
 
     let competing = open(false);
     let mut response = competing
-        .queue_query(raw_request(0, 1).validate().unwrap())
+        .queue_read(|reply| Read::Metrics(raw_request(0, 1).validate().unwrap(), reply))
         .unwrap();
     assert!(async_runtime::block_on(response.recv()).unwrap().is_ok());
     assert_eq!(read_events(), existing);
@@ -455,7 +478,7 @@ fn restart_interrupts_only_unresolved_events_and_new_sessions_can_recover() {
 
     let restarted = open(false);
     let mut response = restarted
-        .queue_query(raw_request(0, 1).validate().unwrap())
+        .queue_read(|reply| Read::Metrics(raw_request(0, 1).validate().unwrap(), reply))
         .unwrap();
     assert!(async_runtime::block_on(response.recv()).unwrap().is_ok());
     let interrupted = [
@@ -477,7 +500,7 @@ fn restart_interrupts_only_unresolved_events_and_new_sessions_can_recover() {
 
     let restarted_again = open(false);
     let mut response = restarted_again
-        .queue_query(raw_request(0, 1).validate().unwrap())
+        .queue_read(|reply| Read::Metrics(raw_request(0, 1).validate().unwrap(), reply))
         .unwrap();
     assert!(async_runtime::block_on(response.recv()).unwrap().is_ok());
     assert_eq!(read_events(), expected);

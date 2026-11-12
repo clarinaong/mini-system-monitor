@@ -1,4 +1,5 @@
 mod events;
+mod incident_query;
 mod query;
 pub(crate) mod recorder;
 

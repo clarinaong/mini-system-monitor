@@ -124,3 +124,76 @@ body.history-window {
 .history-dot {
   stroke-width: 4;
 }
+
+.incident-focus {
+  margin-top: 16px;
+}
+
+.incident-focus > button {
+  margin-top: 8px;
+}
+
+.incident-details {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 5px 16px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.incident-details dt {
+  color: #4c5a6a;
+}
+
+.incident-details dd {
+  margin: 0;
+}
+
+.history-incident-line {
+  stroke: #925422;
+  stroke-dasharray: 4 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.incident-timeline {
+  margin-top: 16px;
+}
+
+.incident-timeline .history-header {
+  align-items: center;
+  gap: 10px;
+}
+
+.incident-timeline h2 {
+  margin: 0;
+}
+
+.incident-timeline .history-controls {
+  flex-wrap: wrap;
+}
+
+.incident-timeline ul {
+  max-height: 260px;
+  overflow-y: auto;
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+}
+
+.incident-timeline li + li {
+  margin-top: 4px;
+}
+
+.incident-timeline li button {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(112px, auto) 1fr auto;
+  gap: 8px;
+  text-align: left;
+  font-size: 13px;
+}
+
+.incident-timeline li button[aria-pressed="true"] {
+  border-color: #356ba0;
+  background: #eaf2fa;
+}

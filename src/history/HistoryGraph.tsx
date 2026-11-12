@@ -20,6 +20,10 @@ function follows(previous: RawSample, current: RawSample) {
     && current.timestampMs - previous.timestampMs <= maxGap;
 }
 
+function graphX(timestamp: number, range: HistoryRequest) {
+  return PADDING + (WIDTH - 2 * PADDING) * (timestamp - range.startMs) / (range.endMs - range.startMs);
+}
+
 export function graphPaths(result: HistoryResult, range: HistoryRequest, metric: Metric) {
   const line: string[] = [];
   const dots: string[] = [];
@@ -34,7 +38,7 @@ export function graphPaths(result: HistoryResult, range: HistoryRequest, metric:
     }
     if (value === null) return;
 
-    const x = PADDING + (WIDTH - 2 * PADDING) * (timestamp - range.startMs) / (range.endMs - range.startMs);
+    const x = graphX(timestamp, range);
     const y = PADDING + (HEIGHT - 2 * PADDING) * (1 - value / 100);
     const point = `${x.toFixed(2)} ${y.toFixed(2)}`;
     connected = lastPoint !== null;
@@ -71,13 +75,15 @@ const timeLabel = new Intl.DateTimeFormat(undefined, {
   month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
 });
 
-export function HistoryGraph({ result, range, metric }: {
+export function HistoryGraph({ result, range, metric, incidentStart }: {
   result: HistoryResult;
   range: HistoryRequest;
   metric: Metric;
+  incidentStart?: number;
 }) {
   const label = metric === "cpu" ? "CPU usage" : "RAM usage";
   const { line, dots } = graphPaths(result, range, metric);
+  const incidentX = incidentStart === undefined ? null : graphX(incidentStart, range);
 
   return (
     <section className="history-chart" aria-label={label}>
@@ -89,6 +95,11 @@ export function HistoryGraph({ result, range, metric }: {
             <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} preserveAspectRatio="none" role="img"
               aria-label={`${label} from ${timeLabel.format(range.startMs)} to ${timeLabel.format(range.endMs)}`}>
               <path className="history-grid" d={`M0 3H${WIDTH} M0 52H${WIDTH} M0 101H${WIDTH}`} />
+              {incidentX !== null && (
+                <line className="history-incident-line" x1={incidentX} x2={incidentX} y1={0} y2={HEIGHT}>
+                  <title>Incident start</title>
+                </line>
+              )}
               <path className="history-line" d={line} />
               <path className="history-dot" d={dots} />
             </svg>

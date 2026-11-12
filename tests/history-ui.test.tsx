@@ -4,6 +4,7 @@ import { beforeEach, expect, test, vi } from "vitest";
 import HistoryWindow from "../src/history/HistoryWindow";
 import { graphPaths } from "../src/history/HistoryGraph";
 import { HOUR_MS, MINUTE_MS, type HistoryRequest, type HistoryResult, type RawSample } from "../src/history/query";
+import type { SavedIncident } from "../src/history/incidents";
 import { settingsSnapshot } from "./fixtures/settings";
 
 const mocks = vi.hoisted(() => ({ invoke: vi.fn(), listen: vi.fn() }));
@@ -28,12 +29,15 @@ function bucket(startMs: number) {
 }
 
 let read: ReturnType<typeof vi.fn>;
+let readIncidents: ReturnType<typeof vi.fn>;
 const requests = () => mocks.invoke.mock.calls.filter(([command]) => command === "query_history");
 
 beforeEach(() => {
   read = vi.fn(async (request: HistoryRequest) => ({ resolution: request.resolution, rows: [] }));
+  readIncidents = vi.fn(async () => []);
   mocks.invoke.mockImplementation(async (command, args) => {
     if (command === "query_history") return read(args.request);
+    if (command === "query_incidents") return readIncidents(args.request);
     if (command === "get_settings") return settingsSnapshot();
     throw new Error(`Unexpected command ${command}`);
   });
@@ -64,7 +68,7 @@ test("shows the empty range and switches from raw to bounded minute averages", a
   const averaged = read.mock.calls[1][0] as HistoryRequest;
   expect(averaged.resolution).toBe("minuteAverages");
   expect(averaged.endMs - averaged.startMs).toBe(7 * 24 * HOUR_MS);
-  expect(mocks.invoke.mock.calls.every(([command]) => ["get_settings", "query_history"].includes(command))).toBe(true);
+  expect(mocks.invoke.mock.calls.every(([command]) => ["get_settings", "query_history", "query_incidents"].includes(command))).toBe(true);
 });
 
 test("offers retry on busy and prompts for a shorter range when capped", async () => {
@@ -123,4 +127,57 @@ test("minute averages preserve missing buckets and clip edge points to the reque
   const paths = graphPaths({ ...result, rows: [...result.rows] }, request, "ram");
   expect(paths.line).toBe("M52.50 81.40 L201.00 81.40 M547.50 81.40");
   expect(paths.dots).toBe("M547.50 81.40h0");
+});
+
+test("filters incident types and statuses, then aligns both charts with the selected incident", async () => {
+  const startMs = Date.now() - 8 * MINUTE_MS;
+  const interrupted: SavedIncident = {
+    sessionId: 1, kind: "cpuSpike", startSequence: 1, startMs, detectedMs: startMs,
+    status: "interrupted", endMs: null, durationMs: null,
+  };
+  readIncidents.mockResolvedValue([
+    { ...interrupted, kind: "sustainedMemory", status: "open", startSequence: 3 },
+    { ...interrupted, status: "recovered", startSequence: 2, endMs: startMs + 5000, durationMs: 5000 },
+    interrupted,
+  ]);
+  read.mockImplementation(async (request: HistoryRequest) => ({
+    resolution: "raw", rows: [sample(startMs - 5_000), sample(startMs), sample(startMs + 5_000)]
+      .filter(row => row.timestampMs >= request.startMs && row.timestampMs < request.endMs),
+  }));
+
+  const { container } = render(<HistoryWindow />);
+  const timeline = screen.getByRole("region", { name: "Incident timeline" });
+  expect(await within(timeline).findByRole("button", { name: /Sustained RAM usage, Open/ })).toBeVisible();
+  fireEvent.change(within(timeline).getByLabelText("Type"), { target: { value: "cpuSpike" } });
+  expect(within(timeline).getAllByRole("button")).toHaveLength(2);
+  fireEvent.change(within(timeline).getByLabelText("Status"), { target: { value: "interrupted" } });
+  expect(within(timeline).getAllByRole("button")).toHaveLength(1);
+  const selected = within(timeline).getByRole("button", { name: /CPU spike, Interrupted/ });
+  fireEvent.click(selected);
+  expect(selected).toHaveAttribute("aria-pressed", "true");
+  const detail = screen.getByRole("region", { name: "Selected incident" });
+  expect(within(detail).getByText("Unknown")).toBeVisible();
+  expect(within(detail).queryByText("Duration")).toBeNull();
+  await screen.findByRole("img", { name: /^CPU usage from/ });
+  expect(container.querySelectorAll(".history-incident-line")).toHaveLength(2);
+  expect(read.mock.calls[1][0]).toMatchObject({ startMs: startMs - 5 * MINUTE_MS, resolution: "raw" });
+  expect(readIncidents).toHaveBeenCalledTimes(1);
+
+  fireEvent.click(screen.getByRole("button", { name: "Back to selected time range" }));
+  expect(screen.queryByRole("region", { name: "Selected incident" })).toBeNull();
+  await screen.findByRole("img", { name: /^CPU usage from/ });
+  expect(container.querySelectorAll(".history-incident-line")).toHaveLength(0);
+});
+
+test("retries a capped incident read independently of the graphs", async () => {
+  readIncidents.mockRejectedValueOnce({ code: "tooManyResults" });
+  render(<HistoryWindow />);
+  const timeline = screen.getByRole("region", { name: "Incident timeline" });
+  expect(await within(timeline).findByRole("alert")).toHaveTextContent("Choose a shorter range");
+  expect(screen.getByText("No saved samples in this range.")).toBeVisible();
+
+  fireEvent.click(within(timeline).getByRole("button", { name: "Retry incidents" }));
+  expect(await within(timeline).findByText("No incidents started in this range.")).toBeVisible();
+  expect(read).toHaveBeenCalledTimes(1);
+  expect(readIncidents.mock.calls[1][0]).toEqual(readIncidents.mock.calls[0][0]);
 });

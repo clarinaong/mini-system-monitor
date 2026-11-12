@@ -43,7 +43,7 @@ export function queryHistory(request: HistoryRequest) {
   return invoke<HistoryResult>("query_history", { request });
 }
 
-export function historyError(error: unknown) {
+export function historyError(error: unknown, subject: "history" | "incidents") {
   const code = typeof error === "object" && error !== null && "code" in error ? error.code : null;
   switch (code) {
     case "rangeTooWide":
@@ -53,6 +53,6 @@ export function historyError(error: unknown) {
     case "busy":
       return "A history request is still running. Try again in a moment.";
     default:
-      return "Unable to read saved history. Try again.";
+      return `Unable to read saved ${subject}. Try again.`;
   }
 }

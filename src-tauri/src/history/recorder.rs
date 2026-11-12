@@ -1,5 +1,6 @@
 use super::{
     HistoryDatabase,
+    incident_query::{IncidentQuery, IncidentRequest, SavedIncident},
     query::{Query, QueryError, QueryRequest, QueryResult},
 };
 use crate::{incidents::IncidentTransition, monitor::MetricsSample};
@@ -22,6 +23,7 @@ const UNAVAILABLE: &str = "Local history storage is unavailable.";
 
 type ClearResult = Result<(), String>;
 type QueryReply = Result<QueryResult, QueryError>;
+type IncidentReply = Result<Vec<SavedIncident>, QueryError>;
 
 #[derive(Default)]
 struct Pending {
@@ -33,7 +35,7 @@ struct Pending {
     writing: bool,
     clear: Option<mpsc::Sender<ClearResult>>,
     clearing: bool,
-    query: Option<(Query, async_runtime::Sender<QueryReply>)>,
+    query: Option<Read>,
     querying: bool,
     stopped: bool,
 }
@@ -205,7 +207,10 @@ impl HistoryState {
         Ok(response)
     }
 
-    fn queue_query(&self, query: Query) -> Result<async_runtime::Receiver<QueryReply>, QueryError> {
+    fn queue_read<T>(
+        &self,
+        make_read: impl FnOnce(async_runtime::Sender<T>) -> Read,
+    ) -> Result<async_runtime::Receiver<T>, QueryError> {
         let shared = &self.recorder.0;
         let mut pending = shared.pending.lock().map_err(|_| QueryError::Unavailable)?;
         if pending.stopped {
@@ -215,7 +220,7 @@ impl HistoryState {
             return Err(QueryError::Busy);
         }
         let (reply, response) = async_runtime::channel(1);
-        pending.query = Some((query, reply));
+        pending.query = Some(make_read(reply));
         shared.wake.notify_one();
         Ok(response)
     }
@@ -265,12 +270,37 @@ pub async fn query_history<R: Runtime>(app: AppHandle<R>, request: QueryRequest)
     let mut response = app
         .try_state::<HistoryState>()
         .ok_or(QueryError::Unavailable)?
-        .queue_query(query)?;
+        .queue_read(|reply| Read::Metrics(query, reply))?;
     response.recv().await.ok_or(QueryError::Unavailable)?
 }
 
+#[tauri::command]
+pub async fn query_incidents<R: Runtime>(
+    app: AppHandle<R>,
+    request: IncidentRequest,
+) -> IncidentReply {
+    let query = request.validate()?;
+    let mut response = app
+        .try_state::<HistoryState>()
+        .ok_or(QueryError::Unavailable)?
+        .queue_read(|reply| Read::Incidents(query, reply))?;
+    response.recv().await.ok_or(QueryError::Unavailable)?
+}
+
+enum Read {
+    Metrics(Query, async_runtime::Sender<QueryReply>),
+    Incidents(IncidentQuery, async_runtime::Sender<IncidentReply>),
+}
+
+fn finish_read<T>(shared: &Shared, reply: async_runtime::Sender<T>, result: T) {
+    if let Ok(mut pending) = shared.pending.lock() {
+        pending.querying = false;
+        let _ = reply.try_send(result);
+    }
+}
+
 enum Work {
-    Query(Query, async_runtime::Sender<QueryReply>),
+    Read(Read),
     Clear(mpsc::Sender<ClearResult>),
     Prune(Option<u64>),
     Write(u64, RecordingWrite),
@@ -302,9 +332,9 @@ fn next_work(shared: &Shared, next_prune: Instant) -> Option<Work> {
             pending.writing = true;
             return Some(Work::Write(generation, RecordingWrite::Event(event)));
         }
-        if let Some((query, reply)) = pending.query.take() {
+        if let Some(read) = pending.query.take() {
             pending.querying = true;
-            return Some(Work::Query(query, reply));
+            return Some(Work::Read(read));
         }
         (pending, _) = shared.wake.wait_timeout(pending, wait).ok()?;
     }
@@ -321,17 +351,20 @@ fn run(shared: &Shared, path: PathBuf) {
     let mut retry_at = next_prune;
     while let Some(work) = next_work(shared, next_prune) {
         match work {
-            Work::Query(query, reply) => {
+            Work::Read(Read::Metrics(query, reply)) => {
                 let result = if let Some(database) = &storage.database {
                     query.run(database)
                 } else {
                     query.read_existing(&storage.path)
                 };
-                let Ok(mut pending) = shared.pending.lock() else {
-                    break;
+                finish_read(shared, reply, result);
+            }
+            Work::Read(Read::Incidents(query, reply)) => {
+                let result = match &storage.database {
+                    Some(database) => query.run(database),
+                    None => query.read_existing(&storage.path),
                 };
-                pending.querying = false;
-                let _ = reply.try_send(result);
+                finish_read(shared, reply, result);
             }
             Work::Clear(reply) => {
                 let result = storage.clear();
