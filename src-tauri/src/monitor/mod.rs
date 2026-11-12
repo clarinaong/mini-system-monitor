@@ -306,6 +306,8 @@ fn run_worker<C: collector::Collector, K: sampler::Clock>(
     history: Option<&HistoryRecorder>,
     publish: impl Fn(&MetricsSample, &[EligibleAlert], u64),
 ) {
+    let mut detector = crate::incidents::IncidentDetector::default();
+    let mut recording_start = None;
     loop {
         let Ok(control) = shared.control.lock() else {
             break;
@@ -326,6 +328,11 @@ fn run_worker<C: collector::Collector, K: sampler::Clock>(
         let recording_generation = history.and_then(HistoryRecorder::generation);
         if let Some(mut sample) = sampler.sample_due() {
             let collection_interval_ms = sample.interval_ms;
+            let transitions = detector.observe(&sample);
+            if recording_start.map(|(generation, _)| generation) != recording_generation {
+                recording_start =
+                    recording_generation.map(|generation| (generation, sample.sequence));
+            }
             let Ok(mut control) = shared.control.lock() else {
                 break;
             };
@@ -346,8 +353,17 @@ fn run_worker<C: collector::Collector, K: sampler::Clock>(
             cache.record(sample.clone());
             drop(cache);
             drop(control);
-            if let (Some(history), Some(generation)) = (history, recording_generation) {
+            if let (Some(history), Some((generation, first_sequence))) = (history, recording_start)
+            {
                 history.offer(generation, &sample, collection_interval_ms);
+                if !transitions.is_empty() {
+                    history.offer_events(
+                        generation,
+                        transitions
+                            .into_iter()
+                            .filter(|event| event.start_sequence() >= first_sequence),
+                    );
+                }
             }
             publish(&sample, &alerts, evaluation_revision);
         }

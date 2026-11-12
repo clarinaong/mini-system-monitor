@@ -85,7 +85,7 @@ fn reopening_preserves_data_and_does_not_repeat_migration() {
     }
     for _ in 0..2 {
         let database = HistoryDatabase::open(&path).unwrap();
-        assert_eq!(version(&database.connection), 1);
+        assert_eq!(version(&database.connection), SCHEMA_VERSION);
         assert_eq!(database.connection.query_row("SELECT memory_used_bytes FROM metric_samples WHERE session_id = ?1 AND sequence = 1", [id], |row| row.get::<_, i64>(0)).unwrap(), 100);
     }
 }
@@ -278,7 +278,12 @@ fn failed_migration_rolls_back_tables_and_version_then_can_retry() {
 
 #[test]
 fn future_foreign_and_unidentified_databases_are_preserved_byte_for_byte() {
-    for (application, version) in [(APPLICATION_ID, 2), (123, 1), (0, 0), (APPLICATION_ID, 0)] {
+    for (application, version) in [
+        (APPLICATION_ID, SCHEMA_VERSION + 1),
+        (123, 1),
+        (0, 0),
+        (APPLICATION_ID, 0),
+    ] {
         let directory = tempdir().unwrap();
         let path = directory.path().join("history.sqlite3");
         {
@@ -360,4 +365,131 @@ fn foreign_key_damage_is_detected_without_deleting_orphaned_samples() {
         Err(HistoryError::InvalidSchema(_))
     ));
     assert_eq!(std::fs::read(&path).unwrap(), original);
+}
+
+#[test]
+fn version_one_migration_preserves_samples_and_session_identity() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("history.sqlite3");
+    let connection = Connection::open(&path).unwrap();
+    connection.execute_batch(SCHEMA).unwrap();
+    connection
+        .pragma_update(None, "application_id", APPLICATION_ID)
+        .unwrap();
+    connection.pragma_update(None, "user_version", 1).unwrap();
+    let id = session(&connection, 100);
+    sample(&connection, id, 1, 100).unwrap();
+    drop(connection);
+
+    let request: query::QueryRequest = serde_json::from_value(serde_json::json!({
+        "startMs": 100, "endMs": 101, "resolution": "raw",
+    }))
+    .unwrap();
+    let result = request.validate().unwrap().read_existing(&path).unwrap();
+    assert!(matches!(result, query::QueryResult::Raw(rows) if rows.len() == 1));
+    assert_eq!(version(&Connection::open(&path).unwrap()), 1);
+
+    let database = HistoryDatabase::open_existing(&path).unwrap();
+    assert_eq!(version(&database.connection), SCHEMA_VERSION);
+    assert_eq!(
+        database
+            .connection
+            .query_row(
+                "SELECT session_id, sequence, timestamp_ms FROM metric_samples",
+                [],
+                |row| Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?
+                )),
+            )
+            .unwrap(),
+        (id, 1, 100)
+    );
+    assert_eq!(
+        database
+            .connection
+            .query_row("SELECT count(*) FROM performance_events", [], |row| row
+                .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+}
+
+#[test]
+fn events_deduplicate_by_session_and_kind_and_prune_by_start_time() {
+    use crate::incidents::{IncidentKind, IncidentTransition, Observation};
+
+    let directory = tempdir().unwrap();
+    let mut database = HistoryDatabase::open(&directory.path().join("history.sqlite3")).unwrap();
+    let start = Observation {
+        sequence: 1,
+        timestamp_ms: 100,
+        monotonic_ms: 0,
+    };
+    let spike = IncidentTransition::Started {
+        kind: IncidentKind::CpuSpike,
+        start,
+        detected: start,
+    };
+    let memory = IncidentTransition::Started {
+        kind: IncidentKind::MemoryJump,
+        start,
+        detected: start,
+    };
+    let recovery = IncidentTransition::Recovered {
+        kind: IncidentKind::CpuSpike,
+        start,
+        end: Observation {
+            sequence: 2,
+            timestamp_ms: 90,
+            monotonic_ms: 1000,
+        },
+    };
+    assert_eq!(database.record_event(None, recovery).unwrap(), None);
+    let first = database.record_event(None, spike).unwrap().unwrap();
+    database.record_event(Some(first), spike).unwrap();
+    database.record_event(Some(first), memory).unwrap();
+    let second = database.record_event(None, spike).unwrap().unwrap();
+    database.record_event(Some(first), recovery).unwrap();
+    database.record_event(Some(first), recovery).unwrap();
+    let rows: Vec<(i64, String, Option<i64>)> = database
+        .connection
+        .prepare(
+            "SELECT session_id, kind, end_ms FROM performance_events ORDER BY session_id, kind",
+        )
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(
+        rows,
+        [
+            (first, "cpuSpike".into(), Some(90)),
+            (first, "memoryJump".into(), None),
+            (second, "cpuSpike".into(), None),
+        ]
+    );
+
+    database.prune(100, None).unwrap();
+    let count = |database: &HistoryDatabase, sql| {
+        database
+            .connection
+            .query_row(sql, [], |row| row.get::<_, i64>(0))
+            .unwrap()
+    };
+    assert_eq!(
+        count(&database, "SELECT count(*) FROM recording_sessions"),
+        2
+    );
+    database.prune(101, None).unwrap();
+    assert_eq!(
+        count(&database, "SELECT count(*) FROM performance_events"),
+        0
+    );
+    assert_eq!(
+        count(&database, "SELECT count(*) FROM recording_sessions"),
+        0
+    );
 }

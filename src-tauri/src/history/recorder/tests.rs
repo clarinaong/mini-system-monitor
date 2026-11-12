@@ -116,13 +116,13 @@ fn mailbox_holds_at_most_one_waiting_sample_even_when_storage_is_busy() {
     recorder.offer(generation, &sample(1, 0), 2_000);
     assert!(matches!(
         next_work(&shared, next_prune),
-        Some(Work::Record(
+        Some(Work::Write(
             _,
-            MetricsSample {
+            RecordingWrite::Sample(MetricsSample {
                 sequence: 1,
                 interval_ms: 2_000,
                 ..
-            }
+            })
         ))
     ));
     recorder.offer(generation, &sample(2, 5_000), 1_000);
@@ -147,7 +147,7 @@ fn clear_invalidates_waiting_and_inflight_collection_before_acknowledging() {
     recorder.offer(generation, &sample(1, 0), 1_000);
     assert!(matches!(
         next_work(&shared, next_prune),
-        Some(Work::Record(..))
+        Some(Work::Write(_, RecordingWrite::Sample(_)))
     ));
     recorder.offer(generation, &sample(2, 5_000), 1_000);
     let response = state.queue_clear().unwrap();
@@ -340,4 +340,38 @@ fn query_mailbox_rejects_requests_while_waiting_and_running() {
     ));
     drop(reply);
     assert!(async_runtime::block_on(response.recv()).is_none());
+}
+
+#[test]
+fn event_mailbox_bounds_pending_writes_and_rejects_stale_generations() {
+    use crate::incidents::IncidentKind;
+
+    let recorder = HistoryRecorder(Arc::new(Shared {
+        pending: Mutex::new(Pending {
+            enabled: true,
+            generation: 1,
+            ..Pending::default()
+        }),
+        ..Shared::default()
+    }));
+    let event = |sequence| {
+        let start = (&sample(sequence, sequence * 1000)).into();
+        IncidentTransition::Started {
+            kind: IncidentKind::CpuSpike,
+            start,
+            detected: start,
+        }
+    };
+    recorder.offer_events(0, [event(1)]);
+    assert!(recorder.0.pending.lock().unwrap().events.is_empty());
+
+    recorder.offer_events(1, (1..=64).map(event));
+    recorder.offer_events(1, [event(65)]);
+    let pending = recorder.0.pending.lock().unwrap();
+    assert_eq!(pending.events.len(), MAX_PENDING_EVENTS);
+    assert_eq!(pending.events.front(), Some(&(1, event(1))));
+    assert_eq!(
+        pending.events.back(),
+        Some(&(1, event(MAX_PENDING_EVENTS as u64)))
+    );
 }

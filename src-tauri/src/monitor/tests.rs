@@ -360,7 +360,7 @@ fn worker_caches_before_broadcast_and_recovers_for_multiple_subscribers() {
             }
             Ok(CollectedMetrics {
                 metrics: SystemMetrics {
-                    cpu_usage: Some(25.0),
+                    cpu_usage: Some(if now.as_secs() == 4 { 95.0 } else { 25.0 }),
                     memory_used: 10,
                     memory_total: 20,
                     battery: None,
@@ -407,7 +407,7 @@ fn worker_caches_before_broadcast_and_recovers_for_multiple_subscribers() {
             );
         })
         .unwrap();
-    for step in 0..3 {
+    for step in 0..6 {
         if step > 0 {
             let _control = state.shared.control.lock().unwrap();
             now.store(step * 1000, Ordering::SeqCst);
@@ -474,4 +474,84 @@ fn delivery_revision_rejects_changed_and_restored_rules_and_shutdown() {
     assert!(state.delivery_settings(revision).is_some());
     state.stop();
     assert!(state.delivery_settings(revision).is_none());
+}
+
+#[test]
+fn live_incident_recording_respects_opt_in_and_clear_boundaries() {
+    use crate::history::HistoryState;
+
+    struct UsageCollector<'a>(&'a MonitorState);
+    impl Collector for UsageCollector<'_> {
+        fn collect(&mut self, now: Duration) -> Result<CollectedMetrics, String> {
+            if now.as_secs() == 23 {
+                self.0.apply_settings(&settings(2)).unwrap();
+            }
+            Ok(CollectedMetrics {
+                metrics: SystemMetrics {
+                    cpu_usage: Some(match now.as_secs() {
+                        2 | 9 | 16 | 23 => 95.0,
+                        _ => 20.0,
+                    }),
+                    memory_used: 10,
+                    memory_total: 20,
+                    battery: None,
+                },
+                battery_error: None,
+            })
+        }
+    }
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("history.sqlite3");
+    let history = HistoryState::at_path(path.clone(), false).unwrap();
+    let recorder = history.recorder();
+    let monitor = MonitorState::new();
+    let clock = FakeClock::default();
+
+    run_worker(
+        Arc::clone(&monitor.shared),
+        Sampler::new(UsageCollector(&monitor), clock.clone(), 1),
+        Some(&recorder),
+        |sample, _, _| {
+            history.wait_until_idle();
+            match sample.sequence {
+                3 => {
+                    assert!(!path.exists());
+                    history.set_enabled(true);
+                }
+                4 => assert!(read_events(&path).is_empty()),
+                10 => {
+                    assert_eq!(read_events(&path), [(10, None)]);
+                    history.clear().unwrap();
+                }
+                11 => assert!(read_events(&path).is_empty()),
+                17 => {
+                    assert_eq!(read_events(&path), [(17, None)]);
+                    history.set_enabled(false);
+                    history.set_enabled(true);
+                }
+                18 => assert_eq!(read_events(&path), [(17, None)]),
+                24 => assert_eq!(sample.interval_ms, 2000),
+                25 => monitor.shared.control.lock().unwrap().stopped = true,
+                _ => {}
+            }
+            clock.set(sample.monotonic_ms + sample.interval_ms);
+        },
+    );
+    assert_eq!(read_events(&path), [(17, None), (24, Some(25))]);
+}
+
+fn read_events(path: &std::path::Path) -> Vec<(i64, Option<i64>)> {
+    let connection = rusqlite::Connection::open(path).unwrap();
+    connection
+        .prepare(
+            "SELECT start_sequence, end_sequence FROM performance_events ORDER BY start_sequence",
+        )
+        .unwrap()
+        .query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?))
+        })
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()
 }

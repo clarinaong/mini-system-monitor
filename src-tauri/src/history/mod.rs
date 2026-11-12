@@ -1,3 +1,4 @@
+mod events;
 mod query;
 pub(crate) mod recorder;
 
@@ -9,7 +10,8 @@ use rusqlite::{Connection, OpenFlags, TransactionBehavior, params};
 use std::{fmt, path::Path, time::Duration};
 
 const APPLICATION_ID: i32 = 0x4d53_4d48;
-const SCHEMA_VERSION: i32 = 1;
+const SCHEMA_VERSION: i32 = 2;
+const EVENTS_SCHEMA: &str = include_str!("schema_v2.sql");
 const SCHEMA: &str = include_str!("schema.sql");
 
 #[derive(Debug)]
@@ -133,16 +135,7 @@ impl HistoryDatabase {
         };
 
         let transaction = self.connection.transaction()?;
-        let session_id = match session_id {
-            Some(id) => id,
-            None => {
-                transaction.execute(
-                    "INSERT INTO recording_sessions (started_at_ms) VALUES (?1)",
-                    [timestamp],
-                )?;
-                transaction.last_insert_rowid()
-            }
-        };
+        let session_id = session_for_write(&transaction, session_id, timestamp)?;
         transaction.execute(
             "INSERT INTO metric_samples (
                 session_id, sequence, timestamp_ms, monotonic_ms, interval_ms, cpu_percent,
@@ -175,8 +168,14 @@ impl HistoryDatabase {
             [cutoff_ms],
         )?;
         transaction.execute(
+            "DELETE FROM performance_events WHERE start_ms < ?1",
+            [cutoff_ms],
+        )?;
+        transaction.execute(
             "DELETE FROM recording_sessions WHERE id IS NOT ?1 AND NOT EXISTS (
                 SELECT 1 FROM metric_samples WHERE session_id = recording_sessions.id
+            ) AND NOT EXISTS (
+                SELECT 1 FROM performance_events WHERE session_id = recording_sessions.id
             )",
             [active_session],
         )?;
@@ -189,6 +188,21 @@ impl HistoryDatabase {
             .execute("DELETE FROM recording_sessions", [])?;
         Ok(())
     }
+}
+
+fn session_for_write(
+    connection: &Connection,
+    session_id: Option<i64>,
+    timestamp: i64,
+) -> Result<i64, HistoryError> {
+    if let Some(id) = session_id {
+        return Ok(id);
+    }
+    connection.execute(
+        "INSERT INTO recording_sessions (started_at_ms) VALUES (?1)",
+        [timestamp],
+    )?;
+    Ok(connection.last_insert_rowid())
 }
 
 fn valid_percentage(value: &f32) -> bool {
@@ -218,6 +232,12 @@ fn migrate(
             }
             transaction.execute_batch(schema)?;
             transaction.pragma_update(None, "application_id", APPLICATION_ID)?;
+            transaction.execute_batch(EVENTS_SCHEMA)?;
+            transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        }
+        (APPLICATION_ID, 1) => {
+            validate_manifest(&transaction, 1)?;
+            transaction.execute_batch(EVENTS_SCHEMA)?;
             transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         }
         (APPLICATION_ID, SCHEMA_VERSION) => {}
@@ -238,16 +258,19 @@ fn validate_schema(connection: &Connection) -> Result<(), HistoryError> {
     if check != "ok" {
         return Err(HistoryError::InvalidSchema(check));
     }
-    validate_manifest(connection)?;
+    validate_manifest(connection, SCHEMA_VERSION)?;
     if connection.prepare("PRAGMA foreign_key_check")?.exists([])? {
         return Err(HistoryError::InvalidSchema("foreign key violations".into()));
     }
     Ok(())
 }
 
-fn validate_manifest(connection: &Connection) -> Result<(), HistoryError> {
+fn validate_manifest(connection: &Connection, version: i32) -> Result<(), HistoryError> {
     let expected = Connection::open_in_memory()?;
     expected.execute_batch(SCHEMA)?;
+    if version == SCHEMA_VERSION {
+        expected.execute_batch(EVENTS_SCHEMA)?;
+    }
     let manifest =
         |database: &Connection| -> Result<Vec<(String, String, String)>, rusqlite::Error> {
             database.prepare("SELECT type, name, sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name")?
@@ -255,9 +278,9 @@ fn validate_manifest(connection: &Connection) -> Result<(), HistoryError> {
             .collect()
         };
     if manifest(connection)? != manifest(&expected)? {
-        return Err(HistoryError::InvalidSchema(
-            "tables, constraints or indexes do not match version 1".into(),
-        ));
+        return Err(HistoryError::InvalidSchema(format!(
+            "tables, constraints or indexes do not match version {version}"
+        )));
     }
     Ok(())
 }

@@ -208,14 +208,14 @@ impl Query {
         let application_id =
             transaction.pragma_query_value(None, "application_id", |row| row.get(0))?;
         let version = transaction.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if (application_id, version) != (APPLICATION_ID, SCHEMA_VERSION) {
+        if application_id != APPLICATION_ID || !matches!(version, 1 | SCHEMA_VERSION) {
             return Err(HistoryError::Incompatible {
                 application_id,
                 version,
             }
             .into());
         }
-        validate_manifest(&transaction)?;
+        validate_manifest(&transaction, version)?;
         let result = self.read(&transaction)?;
         transaction.commit()?;
         Ok(result)

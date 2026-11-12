@@ -49,6 +49,14 @@ pub(crate) enum IncidentTransition {
     },
 }
 
+impl IncidentTransition {
+    pub(crate) fn start_sequence(&self) -> u64 {
+        match self {
+            Self::Started { start, .. } | Self::Recovered { start, .. } => start.sequence,
+        }
+    }
+}
+
 #[derive(Default)]
 struct Episode {
     start: Option<Observation>,

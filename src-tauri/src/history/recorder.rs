@@ -2,8 +2,9 @@ use super::{
     HistoryDatabase,
     query::{Query, QueryError, QueryRequest, QueryResult},
 };
-use crate::monitor::MetricsSample;
+use crate::{incidents::IncidentTransition, monitor::MetricsSample};
 use std::{
+    collections::VecDeque,
     fs,
     path::{Path, PathBuf},
     sync::{Arc, Condvar, Mutex, mpsc},
@@ -12,6 +13,7 @@ use std::{
 };
 use tauri::{AppHandle, Manager, Runtime, WebviewWindow, async_runtime};
 
+const MAX_PENDING_EVENTS: usize = 32;
 const RECORDING_INTERVAL_MS: u64 = 5_000;
 const RETENTION_MS: i64 = 7 * 24 * 60 * 60 * 1_000;
 const PRUNE_INTERVAL: Duration = Duration::from_secs(60 * 60);
@@ -27,12 +29,19 @@ struct Pending {
     generation: u64,
     last_sample_ms: Option<u64>,
     sample: Option<(u64, MetricsSample)>,
+    events: VecDeque<(u64, IncidentTransition)>,
     writing: bool,
     clear: Option<mpsc::Sender<ClearResult>>,
     clearing: bool,
     query: Option<(Query, async_runtime::Sender<QueryReply>)>,
     querying: bool,
     stopped: bool,
+}
+
+impl Pending {
+    fn accepts(&self, generation: u64) -> bool {
+        self.enabled && !self.stopped && !self.clearing && self.generation == generation
+    }
 }
 
 #[derive(Default)]
@@ -50,6 +59,27 @@ impl HistoryRecorder {
         (pending.enabled && !pending.stopped && !pending.clearing).then_some(pending.generation)
     }
 
+    pub(crate) fn offer_events(
+        &self,
+        generation: u64,
+        events: impl IntoIterator<Item = IncidentTransition>,
+    ) {
+        let Ok(mut pending) = self.0.pending.lock() else {
+            return;
+        };
+        if !pending.accepts(generation) {
+            return;
+        }
+        let available = MAX_PENDING_EVENTS - pending.events.len();
+        pending.events.extend(
+            events
+                .into_iter()
+                .take(available)
+                .map(|event| (generation, event)),
+        );
+        self.0.wake.notify_one();
+    }
+
     pub(crate) fn offer(
         &self,
         generation: u64,
@@ -59,10 +89,7 @@ impl HistoryRecorder {
         let Ok(mut pending) = self.0.pending.lock() else {
             return;
         };
-        if pending.stopped
-            || !pending.enabled
-            || pending.clearing
-            || pending.generation != generation
+        if !pending.accepts(generation)
             || pending.sample.is_some()
             || pending.last_sample_ms.is_some_and(|last| {
                 sample.monotonic_ms.saturating_sub(last) < RECORDING_INTERVAL_MS
@@ -125,7 +152,7 @@ impl HistoryState {
         let (_guard, result) = shared
             .wake
             .wait_timeout_while(pending, Duration::from_secs(2), |pending| {
-                pending.sample.is_some() || pending.writing
+                pending.sample.is_some() || !pending.events.is_empty() || pending.writing
             })
             .unwrap();
         assert!(
@@ -145,6 +172,7 @@ impl HistoryState {
         pending.enabled = enabled;
         pending.generation += 1;
         pending.sample = None;
+        pending.events.clear();
         if !enabled {
             drop(
                 shared
@@ -154,7 +182,7 @@ impl HistoryState {
         }
     }
 
-    fn clear(&self) -> ClearResult {
+    pub(crate) fn clear(&self) -> ClearResult {
         self.queue_clear()?.recv().map_err(|_| UNAVAILABLE)?
     }
 
@@ -170,6 +198,7 @@ impl HistoryState {
         }
         pending.generation += 1;
         pending.sample = None;
+        pending.events.clear();
         pending.clearing = true;
         pending.clear = Some(reply);
         shared.wake.notify_one();
@@ -196,6 +225,7 @@ impl HistoryState {
         if let Ok(mut pending) = shared.pending.lock() {
             pending.stopped = true;
             pending.sample = None;
+            pending.events.clear();
             pending.clear = None;
             pending.query = None;
             shared.wake.notify_all();
@@ -243,7 +273,12 @@ enum Work {
     Query(Query, async_runtime::Sender<QueryReply>),
     Clear(mpsc::Sender<ClearResult>),
     Prune(Option<u64>),
-    Record(u64, MetricsSample),
+    Write(u64, RecordingWrite),
+}
+
+enum RecordingWrite {
+    Sample(MetricsSample),
+    Event(IncidentTransition),
 }
 
 fn next_work(shared: &Shared, next_prune: Instant) -> Option<Work> {
@@ -261,7 +296,11 @@ fn next_work(shared: &Shared, next_prune: Instant) -> Option<Work> {
         }
         if let Some((generation, sample)) = pending.sample.take() {
             pending.writing = true;
-            return Some(Work::Record(generation, sample));
+            return Some(Work::Write(generation, RecordingWrite::Sample(sample)));
+        }
+        if let Some((generation, event)) = pending.events.pop_front() {
+            pending.writing = true;
+            return Some(Work::Write(generation, RecordingWrite::Event(event)));
         }
         if let Some((query, reply)) = pending.query.take() {
             pending.querying = true;
@@ -310,12 +349,16 @@ fn run(shared: &Shared, path: PathBuf) {
                 }
                 next_prune = Instant::now() + PRUNE_INTERVAL;
             }
-            Work::Record(generation, sample) => {
-                if Instant::now() >= retry_at
-                    && let Err(error) = storage.record(generation, &sample)
-                {
-                    eprintln!("Could not record local history: {error}");
-                    retry_at = Instant::now() + RECORDING_RETRY;
+            Work::Write(generation, write) => {
+                if Instant::now() >= retry_at {
+                    let result = match write {
+                        RecordingWrite::Sample(sample) => storage.record(generation, &sample),
+                        RecordingWrite::Event(event) => storage.record_event(generation, event),
+                    };
+                    if let Err(error) = result {
+                        eprintln!("Could not record local history: {error}");
+                        retry_at = Instant::now() + RECORDING_RETRY;
+                    }
                 }
                 let Ok(mut pending) = shared.pending.lock() else {
                     break;
@@ -343,7 +386,7 @@ impl Storage {
         Ok(())
     }
 
-    fn record(&mut self, generation: u64, sample: &MetricsSample) -> Result<(), String> {
+    fn open_for_write(&mut self) -> Result<&mut HistoryDatabase, String> {
         if self.database.is_none() {
             let parent = self.path.parent().ok_or(UNAVAILABLE)?;
             fs::create_dir_all(parent).map_err(|error| error.to_string())?;
@@ -351,14 +394,33 @@ impl Storage {
             self.database =
                 Some(HistoryDatabase::open(&self.path).map_err(|error| error.to_string())?);
         }
-        let database = self.database.as_mut().ok_or(UNAVAILABLE)?;
+        self.database.as_mut().ok_or_else(|| UNAVAILABLE.into())
+    }
+
+    fn record_event(&mut self, generation: u64, event: IncidentTransition) -> Result<(), String> {
+        let id = self
+            .session
+            .filter(|(active, _)| *active == generation)
+            .map(|(_, id)| id);
+        if id.is_none() && matches!(event, IncidentTransition::Recovered { .. }) {
+            return Ok(());
+        }
+        let id = self
+            .open_for_write()?
+            .record_event(id, event)
+            .map_err(|error| error.to_string())?;
+        self.session = id.map(|id| (generation, id));
+        Ok(())
+    }
+
+    fn record(&mut self, generation: u64, sample: &MetricsSample) -> Result<(), String> {
         let id = self
             .session
             .filter(|(active, _)| *active == generation)
             .map(|(_, id)| id);
         self.session = Some((
             generation,
-            database
+            self.open_for_write()?
                 .record(id, sample)
                 .map_err(|error| error.to_string())?,
         ));
