@@ -8,7 +8,7 @@ export function useHistoryRead<Request, Result>(
   read: (request: Request) => Promise<Result>,
   pending: RefObject<Promise<unknown> | null>,
   attempt: number,
-  subject: "history" | "incidents",
+  subject: "history" | "incidents" | "performance summary",
 ) {
   const [settled, setSettled] = useState<{
     request: Request;

@@ -3,6 +3,8 @@ import { useSettings } from "../hooks/useSettings";
 import { HistoryGraph } from "./HistoryGraph";
 import { IncidentDetails, IncidentTimeline } from "./IncidentTimeline";
 import { queryIncidents, type SavedIncident } from "./incidents";
+import { PerformanceSummary } from "./PerformanceSummary";
+import { historySelection, localTimeZone, querySummary } from "./summary";
 import { HOUR_MS, MINUTE_MS, queryHistory, type HistoryRequest } from "./query";
 import { useHistoryRead } from "./useHistoryRead";
 import "./history.css";
@@ -15,27 +17,32 @@ const ranges = [
   { label: "Last 7 days", duration: 7 * 24 * HOUR_MS },
 ];
 
-function recentRange(duration: number): HistoryRequest {
-  const endMs = Date.now() + 1;
-  return {
-    startMs: Math.max(0, endMs - duration),
-    endMs,
-    resolution: duration <= HOUR_MS ? "raw" : "minuteAverages",
-  };
-}
-
 export default function HistoryWindow() {
-  const [duration, setDuration] = useState(ranges[1].duration);
-  const [request, setRequest] = useState(() => recentRange(ranges[1].duration));
+  const [range, setRange] = useState<number | "yesterday">(ranges[1].duration);
+  const [selection, setSelection] = useState(() => historySelection(ranges[1].duration));
+  const request = selection.history;
   const [selected, setSelected] = useState<SavedIncident | null>(null);
   const [historyAttempt, setHistoryAttempt] = useState(0);
   const [incidentAttempt, setIncidentAttempt] = useState(0);
+  const [summaryAttempt, setSummaryAttempt] = useState(0);
   const pending = useRef<Promise<unknown> | null>(null);
   const focusPanel = useRef<HTMLDivElement>(null);
   const rangeSelect = useRef<HTMLSelectElement>(null);
   useEffect(() => {
     if (selected) focusPanel.current?.focus();
   }, [selected]);
+  useEffect(() => {
+    if (range !== "yesterday") return;
+    const refreshTimeZone = () => {
+      if (selection.timeZone !== localTimeZone()) {
+        setSelected(null);
+        setSelection(historySelection(range));
+      }
+    };
+    window.addEventListener("focus", refreshTimeZone);
+    return () => window.removeEventListener("focus", refreshTimeZone);
+  }, [range, selection.timeZone]);
+
   const graphRange = useMemo<HistoryRequest>(() => selected ? {
     startMs: Math.max(0, selected.startMs - 5 * MINUTE_MS),
     endMs: Math.min(request.endMs, selected.startMs + 10 * MINUTE_MS),
@@ -43,6 +50,7 @@ export default function HistoryWindow() {
   } : request, [request, selected]);
   const history = useHistoryRead(graphRange, queryHistory, pending, historyAttempt, "history");
   const incidents = useHistoryRead(request, queryIncidents, pending, incidentAttempt, "incidents");
+  const summary = useHistoryRead(selection.summary, querySummary, pending, summaryAttempt, "performance summary");
   const { snapshot, loading } = useSettings();
   const recording = snapshot?.settings.history.recordingEnabled;
 
@@ -57,17 +65,19 @@ export default function HistoryWindow() {
         </div>
         <div className="history-controls">
           <label htmlFor="history-range">Time range</label>
-          <select id="history-range" ref={rangeSelect} value={duration} onChange={event => {
-            const next = Number(event.currentTarget.value);
+          <select id="history-range" ref={rangeSelect} value={range} onChange={event => {
+            const value = event.currentTarget.value;
+            const next = value === "yesterday" ? value : Number(value);
             setSelected(null);
-            setDuration(next);
-            setRequest(recentRange(next));
+            setRange(next);
+            setSelection(historySelection(next));
           }}>
             {ranges.map(range => <option key={range.duration} value={range.duration}>{range.label}</option>)}
+            <option value="yesterday">Yesterday</option>
           </select>
-          <button type="button" disabled={!history && !incidents} onClick={() => {
+          <button type="button" disabled={!history && !incidents && !summary} onClick={() => {
             setSelected(null);
-            setRequest(recentRange(duration));
+            setSelection(historySelection(range));
           }}>Refresh</button>
         </div>
       </header>
@@ -97,6 +107,8 @@ export default function HistoryWindow() {
           <HistoryGraph result={history.data} range={graphRange} metric="ram" incidentStart={selected?.startMs} />
         </div>
       )}
+      <PerformanceSummary result={summary} request={selection.summary} timeZone={selection.timeZone}
+        onRetry={() => setSummaryAttempt(attempt => attempt + 1)} />
       <IncidentTimeline result={incidents} selected={selected} onSelect={setSelected}
         onRetry={() => setIncidentAttempt(attempt => attempt + 1)} />
     </main>

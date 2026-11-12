@@ -197,3 +197,48 @@ body.history-window {
   border-color: #356ba0;
   background: #eaf2fa;
 }
+
+.history-summary {
+  margin-top: 16px;
+}
+
+.history-summary > p,
+.history-summary-metrics p {
+  margin: 8px 0 0;
+  color: #4c5a6a;
+  font-size: 13px;
+}
+
+.history-summary > button {
+  margin-top: 8px;
+}
+
+.history-summary-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr));
+  gap: 16px;
+  margin-top: 14px;
+}
+
+.history-summary table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.history-summary caption {
+  font-weight: 600;
+  text-align: left;
+  margin-bottom: 4px;
+}
+
+.history-summary :is(th, td) {
+  padding: 4px;
+  border-bottom: 1px solid #dce2e9;
+  text-align: left;
+}
+
+.history-summary th {
+  font-weight: 500;
+}

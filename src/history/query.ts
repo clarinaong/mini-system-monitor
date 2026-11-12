@@ -43,7 +43,7 @@ export function queryHistory(request: HistoryRequest) {
   return invoke<HistoryResult>("query_history", { request });
 }
 
-export function historyError(error: unknown, subject: "history" | "incidents") {
+export function historyError(error: unknown, subject: "history" | "incidents" | "performance summary") {
   const code = typeof error === "object" && error !== null && "code" in error ? error.code : null;
   switch (code) {
     case "rangeTooWide":
