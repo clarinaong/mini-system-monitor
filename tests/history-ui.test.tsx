@@ -1,10 +1,11 @@
 import { StrictMode } from "react";
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, expect, test, vi } from "vitest";
 import HistoryWindow from "../src/history/HistoryWindow";
 import { graphPaths } from "../src/history/HistoryGraph";
 import { HOUR_MS, MINUTE_MS, type HistoryRequest, type HistoryResult, type RawSample } from "../src/history/query";
 import type { SavedIncident } from "../src/history/incidents";
+import type { Settings } from "../src/types/settings";
 import { settingsSnapshot } from "./fixtures/settings";
 
 const mocks = vi.hoisted(() => ({ invoke: vi.fn(), listen: vi.fn() }));
@@ -180,4 +181,129 @@ test("retries a capped incident read independently of the graphs", async () => {
   expect(await within(timeline).findByText("No incidents started in this range.")).toBeVisible();
   expect(read).toHaveBeenCalledTimes(1);
   expect(readIncidents.mock.calls[1][0]).toEqual(readIncidents.mock.calls[0][0]);
+});
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>(finish => { resolve = finish; });
+  return { promise, resolve };
+}
+
+function incident(kind: SavedIncident["kind"], startMs: number): SavedIncident {
+  return {
+    sessionId: 1, kind, startSequence: startMs, startMs, detectedMs: startMs,
+    status: "open", endMs: null, durationMs: null,
+  };
+}
+
+test("a stale incident success cannot reappear after two rapid range changes", async () => {
+  const first = deferred<SavedIncident[]>();
+  const last = deferred<SavedIncident[]>();
+  const startMs = Date.now() - MINUTE_MS;
+  readIncidents.mockReturnValueOnce(first.promise).mockReturnValueOnce(last.promise);
+
+  render(<StrictMode><HistoryWindow /></StrictMode>);
+  await waitFor(() => expect(readIncidents).toHaveBeenCalledTimes(1));
+  const readsBeforeChanges = read.mock.calls.length;
+  const range = screen.getByLabelText("Time range");
+  fireEvent.change(range, { target: { value: HOUR_MS } });
+  fireEvent.change(range, { target: { value: 24 * HOUR_MS } });
+  expect(read).toHaveBeenCalledTimes(readsBeforeChanges);
+
+  await act(async () => first.resolve([incident("cpuSpike", startMs)]));
+  expect(read).toHaveBeenCalledTimes(readsBeforeChanges + 1);
+  expect(readIncidents).toHaveBeenCalledTimes(2);
+  expect(screen.getByText("Loading incidents…")).toBeVisible();
+  expect(screen.queryByRole("button", { name: /CPU spike/ })).toBeNull();
+
+  await act(async () => last.resolve([incident("memoryJump", startMs)]));
+  expect(await screen.findByRole("button", { name: /RAM usage jump/ })).toBeVisible();
+  const { startMs: latestStart, endMs: latestEnd } = readIncidents.mock.calls[1][0];
+  expect(latestEnd - latestStart).toBe(24 * HOUR_MS);
+  expect(read.mock.lastCall?.[0]).toEqual({
+    startMs: latestStart, endMs: latestEnd, resolution: "minuteAverages",
+  });
+});
+
+test("switching incidents discards an obsolete chart response and renders gaps in the current charts", async () => {
+  const now = Date.now();
+  const first = incident("cpuSpike", now - 10 * MINUTE_MS);
+  const second = incident("memoryJump", now - 7 * MINUTE_MS);
+  const oldCharts = deferred<HistoryResult>();
+  const currentCharts = deferred<HistoryResult>();
+  readIncidents.mockResolvedValue([second, first]);
+  read.mockImplementationOnce(async () => ({ resolution: "raw", rows: [] }))
+    .mockReturnValueOnce(oldCharts.promise).mockReturnValueOnce(currentCharts.promise);
+
+  const { container } = render(<HistoryWindow />);
+  fireEvent.click(await screen.findByRole("button", { name: /CPU spike, Open/ }));
+  fireEvent.click(screen.getByRole("button", { name: /RAM usage jump, Open/ }));
+  expect(read).toHaveBeenCalledTimes(2);
+  await act(async () => oldCharts.resolve({ resolution: "raw", rows: [sample(first.startMs)] }));
+  expect(screen.queryByRole("img", { name: /^CPU usage from/ })).toBeNull();
+  expect(screen.getByText("Loading history…")).toBeVisible();
+
+  const rows = [
+    sample(second.startMs - 10_000), sample(second.startMs - 5_000),
+    sample(second.startMs, { cpuPercent: null, memoryUsedBytes: null, memoryTotalBytes: null }),
+    sample(second.startMs + 5_000, { sessionId: 2 }), sample(second.startMs + 10_000, { sessionId: 2 }),
+  ];
+  await act(async () => currentCharts.resolve({ resolution: "raw", rows }));
+  expect(screen.getByRole("region", { name: "Selected incident" })).toHaveTextContent("RAM usage jump");
+  const paths = Array.from(container.querySelectorAll(".history-line"), path => path.getAttribute("d"));
+  expect(paths).toHaveLength(2);
+  for (const path of paths) expect(path?.match(/M/g)).toHaveLength(2);
+  const markers = Array.from(container.querySelectorAll(".history-incident-line"), line => line.getAttribute("x1"));
+  expect(markers).toHaveLength(2);
+  expect(markers[0]).toEqual(markers[1]);
+  expect(read.mock.calls[2][0].startMs).toBe(second.startMs - 5 * MINUTE_MS);
+
+  fireEvent.change(screen.getByLabelText("Type"), { target: { value: "sustainedCpu" } });
+  expect(screen.queryByRole("region", { name: "Selected incident" })).toBeNull();
+  expect(screen.getByText("No incidents match these filters.")).toBeVisible();
+  await screen.findByText("No saved samples in this range.");
+});
+
+test("reopening History recovers from a read left busy by the previous window", async () => {
+  const closedWindowRead = deferred<HistoryResult>();
+  const callbacks = new Set<(event: { payload: Settings }) => void>();
+  mocks.listen.mockImplementation(async (_event, callback) => {
+    callbacks.add(callback);
+    return () => callbacks.delete(callback);
+  });
+  read.mockReturnValueOnce(closedWindowRead.promise).mockRejectedValueOnce({ code: "busy" });
+  readIncidents.mockRejectedValueOnce({ code: "busy" });
+
+  const first = render(<HistoryWindow />);
+  await screen.findByText("Recording is off");
+  expect(callbacks.size).toBe(1);
+  first.unmount();
+  expect(callbacks.size).toBe(0);
+
+  const reopened = render(<HistoryWindow />);
+  await waitFor(() => expect(screen.getAllByRole("alert")).toHaveLength(2));
+  expect(readIncidents).toHaveBeenCalledTimes(1);
+  await act(async () => closedWindowRead.resolve({ resolution: "raw", rows: [sample(Date.now())] }));
+  expect(screen.getAllByRole("alert")).toHaveLength(2);
+
+  fireEvent.click(screen.getByRole("button", { name: "Retry", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "Retry incidents" }));
+  await screen.findByText("No saved samples in this range.");
+  await screen.findByText("No incidents started in this range.");
+  expect(await screen.findByText("Recording is off")).toBeVisible();
+  act(() => {
+    const saved = settingsSnapshot().settings;
+    saved.history.recordingEnabled = true;
+    for (const callback of callbacks) callback({ payload: saved });
+  });
+  expect(screen.getByText("Recording is on")).toBeVisible();
+  expect(mocks.invoke.mock.calls.some(([command]) => command === "save_settings")).toBe(false);
+  reopened.unmount();
+  expect(callbacks.size).toBe(0);
+
+  const third = render(<HistoryWindow />);
+  await screen.findByText("No incidents started in this range.");
+  expect(callbacks.size).toBe(1);
+  third.unmount();
+  expect(callbacks.size).toBe(0);
 });

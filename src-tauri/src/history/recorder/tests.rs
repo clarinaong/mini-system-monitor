@@ -266,6 +266,8 @@ fn raw_request(start: i64, end: i64) -> QueryRequest {
 
 #[test]
 fn history_command_is_lazy_and_reads_stored_rows_with_recording_off() {
+    use crate::incidents::{IncidentKind, Observation};
+
     let app = mock_builder()
         .invoke_handler(tauri::generate_handler![
             query_history,
@@ -324,7 +326,29 @@ fn history_command_is_lazy_and_reads_stored_rows_with_recording_off() {
     state.set_enabled(true);
     let recorder = state.recorder();
     let sample = sample(1, 0);
-    recorder.offer(recorder.generation().unwrap(), &sample, 1_000);
+    let generation = recorder.generation().unwrap();
+    recorder.offer(generation, &sample, 1_000);
+    let start = Observation::from(&sample);
+    let end = Observation {
+        sequence: 2,
+        monotonic_ms: 5_000,
+        timestamp_ms: start.timestamp_ms + 5_000,
+    };
+    recorder.offer_events(
+        generation,
+        [
+            IncidentTransition::Started {
+                kind: IncidentKind::CpuSpike,
+                start,
+                detected: start,
+            },
+            IncidentTransition::Recovered {
+                kind: IncidentKind::CpuSpike,
+                start,
+                end,
+            },
+        ],
+    );
     state.wait_until_idle();
     state.set_enabled(false);
 
@@ -339,6 +363,24 @@ fn history_command_is_lazy_and_reads_stored_rows_with_recording_off() {
 
     let averages = query(timestamp, timestamp + 1, "minuteAverages");
     assert_eq!(averages["rows"][0]["cpuPercent"]["average"], 25.0);
+    let incident_request = serde_json::json!({
+        "request": {"startMs": timestamp, "endMs": timestamp + 1}
+    });
+    let incidents = invoke(&window, "query_incidents", incident_request.clone())
+        .unwrap()
+        .deserialize::<serde_json::Value>()
+        .unwrap();
+    assert_eq!(incidents.as_array().unwrap().len(), 1);
+    assert_eq!(incidents[0]["sessionId"], result["rows"][0]["sessionId"]);
+    assert_eq!(incidents[0]["startSequence"], result["rows"][0]["sequence"]);
+    assert_eq!(incidents[0]["startMs"], result["rows"][0]["timestampMs"]);
+    assert_eq!(incidents[0]["status"], "recovered");
+    assert_eq!(incidents[0]["durationMs"], 5_000);
+    assert_eq!(incidents[0]["endMs"], end.timestamp_ms);
+
+    let settings = crate::windows::open_settings(app.handle()).unwrap();
+    let denial = invoke(&settings, "query_incidents", incident_request).unwrap_err();
+    assert!(denial.as_str().unwrap().contains("not allowed"));
     let denial = invoke(&window, "clear_history", serde_json::json!({})).unwrap_err();
     assert!(denial.as_str().unwrap().contains("not allowed"));
 }
