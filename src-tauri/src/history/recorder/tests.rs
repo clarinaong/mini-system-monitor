@@ -254,3 +254,90 @@ fn recording_maps_optional_readings_and_preserves_error_gaps() {
     assert_eq!(failed.get::<_, String>(5).unwrap(), "unavailable");
     assert!(rows.next().unwrap().is_none());
 }
+
+fn raw_request(start: i64, end: i64) -> QueryRequest {
+    serde_json::from_value(serde_json::json!({
+        "startMs": start, "endMs": end, "resolution": "raw",
+    }))
+    .unwrap()
+}
+
+#[test]
+fn history_command_is_lazy_and_reads_stored_rows_with_recording_off() {
+    let app = mock_builder()
+        .invoke_handler(tauri::generate_handler![query_history])
+        .build(mock_context(noop_assets()))
+        .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("new").join("history.sqlite3");
+    assert!(app.manage(HistoryState::at_path(path.clone(), false).unwrap()));
+    let window = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+        .build()
+        .unwrap();
+    let query = |start, end| {
+        tauri::test::get_ipc_response(
+            &window,
+            InvokeRequest {
+                cmd: "query_history".into(),
+                callback: CallbackFn(0),
+                error: CallbackFn(1),
+                url: "tauri://localhost".parse().unwrap(),
+                body: InvokeBody::Json(serde_json::json!({
+                    "request": {"startMs": start, "endMs": end, "resolution": "raw"}
+                })),
+                headers: Default::default(),
+                invoke_key: tauri::test::INVOKE_KEY.to_string(),
+            },
+        )
+        .unwrap()
+        .deserialize::<serde_json::Value>()
+        .unwrap()
+    };
+
+    assert_eq!(
+        query(0, 1),
+        serde_json::json!({"resolution": "raw", "rows": []})
+    );
+    assert!(!path.parent().unwrap().exists());
+
+    let state = app.state::<HistoryState>();
+    state.set_enabled(true);
+    let recorder = state.recorder();
+    let sample = sample(1, 0);
+    recorder.offer(recorder.generation().unwrap(), &sample, 1_000);
+    state.wait_until_idle();
+    state.set_enabled(false);
+
+    let timestamp = i64::try_from(sample.timestamp_ms).unwrap();
+    let result = query(timestamp, timestamp + 1);
+    assert_eq!(result["resolution"], "raw");
+    assert_eq!(result["rows"].as_array().unwrap().len(), 1);
+    assert_eq!(result["rows"][0]["sessionId"], 1);
+    assert_eq!(result["rows"][0]["sequence"], 1);
+    assert_eq!(result["rows"][0]["cpuPercent"], 25.0);
+    assert!(result["rows"][0]["batteryPercent"].is_null());
+}
+
+#[test]
+fn query_mailbox_rejects_requests_while_waiting_and_running() {
+    let shared = Arc::new(Shared::default());
+    let state = HistoryState {
+        recorder: HistoryRecorder(Arc::clone(&shared)),
+        worker: Mutex::new(None),
+    };
+    let request = || raw_request(0, 1).validate().unwrap();
+    let mut response = state.queue_query(request()).unwrap();
+    assert!(matches!(
+        state.queue_query(request()),
+        Err(QueryError::Busy)
+    ));
+    let Some(Work::Query(_, reply)) = next_work(&shared, Instant::now() + PRUNE_INTERVAL) else {
+        panic!("expected queued query");
+    };
+    assert!(matches!(
+        state.queue_query(request()),
+        Err(QueryError::Busy)
+    ));
+    drop(reply);
+    assert!(async_runtime::block_on(response.recv()).is_none());
+}

@@ -1,4 +1,7 @@
-use super::HistoryDatabase;
+use super::{
+    HistoryDatabase,
+    query::{Query, QueryError, QueryRequest, QueryResult},
+};
 use crate::monitor::MetricsSample;
 use std::{
     fs,
@@ -7,7 +10,7 @@ use std::{
     thread::{self, JoinHandle},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use tauri::{AppHandle, Manager, Runtime, WebviewWindow};
+use tauri::{AppHandle, Manager, Runtime, WebviewWindow, async_runtime};
 
 const RECORDING_INTERVAL_MS: u64 = 5_000;
 const RETENTION_MS: i64 = 7 * 24 * 60 * 60 * 1_000;
@@ -16,6 +19,7 @@ const RECORDING_RETRY: Duration = Duration::from_secs(60);
 const UNAVAILABLE: &str = "Local history storage is unavailable.";
 
 type ClearResult = Result<(), String>;
+type QueryReply = Result<QueryResult, QueryError>;
 
 #[derive(Default)]
 struct Pending {
@@ -26,6 +30,8 @@ struct Pending {
     writing: bool,
     clear: Option<mpsc::Sender<ClearResult>>,
     clearing: bool,
+    query: Option<(Query, async_runtime::Sender<QueryReply>)>,
+    querying: bool,
     stopped: bool,
 }
 
@@ -170,12 +176,28 @@ impl HistoryState {
         Ok(response)
     }
 
+    fn queue_query(&self, query: Query) -> Result<async_runtime::Receiver<QueryReply>, QueryError> {
+        let shared = &self.recorder.0;
+        let mut pending = shared.pending.lock().map_err(|_| QueryError::Unavailable)?;
+        if pending.stopped {
+            return Err(QueryError::Unavailable);
+        }
+        if pending.querying || pending.query.is_some() {
+            return Err(QueryError::Busy);
+        }
+        let (reply, response) = async_runtime::channel(1);
+        pending.query = Some((query, reply));
+        shared.wake.notify_one();
+        Ok(response)
+    }
+
     pub fn stop(&self) {
         let shared = &self.recorder.0;
         if let Ok(mut pending) = shared.pending.lock() {
             pending.stopped = true;
             pending.sample = None;
             pending.clear = None;
+            pending.query = None;
             shared.wake.notify_all();
         }
         if let Ok(mut worker) = self.worker.lock()
@@ -207,7 +229,18 @@ pub async fn clear_history<R: Runtime>(
     .map_err(|_| UNAVAILABLE)?
 }
 
+#[tauri::command]
+pub async fn query_history<R: Runtime>(app: AppHandle<R>, request: QueryRequest) -> QueryReply {
+    let query = request.validate()?;
+    let mut response = app
+        .try_state::<HistoryState>()
+        .ok_or(QueryError::Unavailable)?
+        .queue_query(query)?;
+    response.recv().await.ok_or(QueryError::Unavailable)?
+}
+
 enum Work {
+    Query(Query, async_runtime::Sender<QueryReply>),
     Clear(mpsc::Sender<ClearResult>),
     Prune(Option<u64>),
     Record(u64, MetricsSample),
@@ -230,6 +263,10 @@ fn next_work(shared: &Shared, next_prune: Instant) -> Option<Work> {
             pending.writing = true;
             return Some(Work::Record(generation, sample));
         }
+        if let Some((query, reply)) = pending.query.take() {
+            pending.querying = true;
+            return Some(Work::Query(query, reply));
+        }
         (pending, _) = shared.wake.wait_timeout(pending, wait).ok()?;
     }
 }
@@ -244,6 +281,18 @@ fn run(shared: &Shared, path: PathBuf) {
     let mut retry_at = next_prune;
     while let Some(work) = next_work(shared, next_prune) {
         match work {
+            Work::Query(query, reply) => {
+                let result = if let Some(database) = &storage.database {
+                    query.run(database)
+                } else {
+                    query.read_existing(&storage.path)
+                };
+                let Ok(mut pending) = shared.pending.lock() else {
+                    break;
+                };
+                pending.querying = false;
+                let _ = reply.try_send(result);
+            }
             Work::Clear(reply) => {
                 let result = storage.clear();
                 if result.is_ok() {

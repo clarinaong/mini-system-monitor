@@ -377,6 +377,8 @@ fn worker_caches_before_broadcast_and_recovers_for_multiple_subscribers() {
     std::fs::write(&bad_path, b"Not a SQLite database").unwrap();
     let history = HistoryState::at_path(bad_path.clone(), true).unwrap();
     let recorder = history.recorder();
+    app.manage(history);
+    let history = app.state::<HistoryState>();
     let (sender, received) = mpsc::channel();
     for subscriber in ["widget", "other-window"] {
         let sender = sender.clone();
@@ -414,6 +416,18 @@ fn worker_caches_before_broadcast_and_recovers_for_multiple_subscribers() {
         let first = received.recv_timeout(Duration::from_secs(2)).unwrap();
         let second = received.recv_timeout(Duration::from_secs(2)).unwrap();
         history.wait_until_idle();
+        if step == 0 {
+            let request = serde_json::from_value(serde_json::json!({
+                "startMs": 0, "endMs": 1, "resolution": "raw",
+            }))
+            .unwrap();
+            let result = tauri::async_runtime::block_on(crate::history::recorder::query_history(
+                app.handle().clone(),
+                request,
+            ));
+            let error = serde_json::to_value(result.unwrap_err()).unwrap();
+            assert_eq!(error["code"], "storage");
+        }
         assert_ne!(first.0, second.0);
         assert_eq!(first.1["sequence"], step + 1);
         assert_eq!(first.1, second.1);

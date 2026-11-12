@@ -40,6 +40,7 @@ pub fn run() {
             get_settings,
             save_settings,
             history::recorder::clear_history,
+            history::recorder::query_history,
             resize_widget,
             get_notification_status,
             request_notification_permission,

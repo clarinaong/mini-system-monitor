@@ -1,3 +1,4 @@
+mod query;
 pub(crate) mod recorder;
 
 pub(crate) use recorder::HistoryRecorder;
@@ -237,6 +238,14 @@ fn validate_schema(connection: &Connection) -> Result<(), HistoryError> {
     if check != "ok" {
         return Err(HistoryError::InvalidSchema(check));
     }
+    validate_manifest(connection)?;
+    if connection.prepare("PRAGMA foreign_key_check")?.exists([])? {
+        return Err(HistoryError::InvalidSchema("foreign key violations".into()));
+    }
+    Ok(())
+}
+
+fn validate_manifest(connection: &Connection) -> Result<(), HistoryError> {
     let expected = Connection::open_in_memory()?;
     expected.execute_batch(SCHEMA)?;
     let manifest =
@@ -249,9 +258,6 @@ fn validate_schema(connection: &Connection) -> Result<(), HistoryError> {
         return Err(HistoryError::InvalidSchema(
             "tables, constraints or indexes do not match version 1".into(),
         ));
-    }
-    if connection.prepare("PRAGMA foreign_key_check")?.exists([])? {
-        return Err(HistoryError::InvalidSchema("foreign key violations".into()));
     }
     Ok(())
 }
