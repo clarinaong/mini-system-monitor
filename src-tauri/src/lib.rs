@@ -1,5 +1,7 @@
 mod alerts;
 mod history;
+#[cfg_attr(not(test), allow(dead_code))]
+mod incidents;
 mod monitor;
 mod notifications;
 mod settings;
