@@ -1,22 +1,88 @@
 use super::{NotificationError, Permission};
 use block2::RcBlock;
-use objc2::runtime::Bool;
-use objc2_foundation::{NSBundle, NSError};
-use objc2_user_notifications::{
-    UNAuthorizationOptions, UNAuthorizationStatus, UNNotificationSettings, UNUserNotificationCenter,
+use objc2::{
+    AnyThread, define_class,
+    rc::Retained,
+    runtime::{Bool, ProtocolObject},
 };
-use std::{ptr::NonNull, sync::mpsc, time::Duration};
+use objc2_foundation::{NSBundle, NSError, NSObject, NSObjectProtocol, NSString, NSUUID};
+use objc2_user_notifications::{
+    UNAuthorizationOptions, UNAuthorizationStatus, UNMutableNotificationContent, UNNotification,
+    UNNotificationPresentationOptions, UNNotificationRequest, UNNotificationSettings,
+    UNNotificationSound, UNUserNotificationCenter, UNUserNotificationCenterDelegate,
+};
+use std::{
+    ptr::NonNull,
+    sync::{OnceLock, mpsc},
+    time::Duration,
+};
+
+define_class!(
+    #[unsafe(super(NSObject))]
+    #[name = "MiniSystemMonitorNotificationDelegate"]
+    struct NotificationDelegate;
+
+    unsafe impl NSObjectProtocol for NotificationDelegate {}
+
+    unsafe impl UNUserNotificationCenterDelegate for NotificationDelegate {
+        #[unsafe(method(userNotificationCenter:willPresentNotification:withCompletionHandler:))]
+        fn present(
+            &self,
+            _center: &UNUserNotificationCenter,
+            notification: &UNNotification,
+            completion: &block2::DynBlock<dyn Fn(UNNotificationPresentationOptions)>,
+        ) {
+            let mut options = UNNotificationPresentationOptions::Banner;
+            if notification.request().content().sound().is_some() {
+                options |= UNNotificationPresentationOptions::Sound;
+            }
+            completion.call((options,));
+        }
+    }
+);
 
 pub fn submit(message: &super::Message) -> Result<(), NotificationError> {
-    let mut notification = notify_rust::Notification::new();
-    notification.summary(&message.title).body(&message.body);
+    static DELEGATE: OnceLock<Retained<NotificationDelegate>> = OnceLock::new();
+    let center = UNUserNotificationCenter::currentNotificationCenter();
+    DELEGATE.get_or_init(|| {
+        let delegate: Retained<NotificationDelegate> =
+            unsafe { objc2::msg_send![super(NotificationDelegate::alloc().set_ivars(())), init] };
+        center.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
+        delegate
+    });
+
+    let content = UNMutableNotificationContent::new();
+    content.setTitle(&NSString::from_str(&message.title));
+    content.setBody(&NSString::from_str(&message.body));
     if message.sound {
-        notification.sound_name("Basso");
+        content.setSound(Some(&UNNotificationSound::defaultSound()));
     }
-    notification
-        .show()
-        .map(drop)
-        .map_err(|error| NotificationError::new("submissionFailed", error.to_string()))
+    let request = UNNotificationRequest::requestWithIdentifier_content_trigger(
+        &NSUUID::UUID().UUIDString(),
+        &content,
+        None,
+    );
+    let (sender, receiver) = mpsc::channel();
+    let callback = RcBlock::new(move |error: *mut NSError| {
+        let result = if error.is_null() {
+            Ok(())
+        } else {
+            Err(NotificationError::new(
+                "submissionFailed",
+                unsafe { &*error }.localizedDescription().to_string(),
+            ))
+        };
+        let _ = sender.send(result);
+    });
+    center.addNotificationRequest_withCompletionHandler(&request, Some(&callback));
+    receiver
+        .recv_timeout(Duration::from_secs(10))
+        .map_err(|_| {
+            NotificationError::new(
+                "submissionFailed",
+                "macOS did not confirm notification submission.",
+            )
+        })?
 }
 
 pub fn available(identifier: &str) -> bool {
