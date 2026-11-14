@@ -59,6 +59,19 @@ npm run build:notification-test -- --locked
 
 The app is generated under `src-tauri/target/release/bundle/macos/`. Some toolchain combinations may need an SDK override. The package was built with `SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk` on the validation Mac.
 
+### Build the Apple silicon DMG
+
+With Python 3.10 or newer, create a virtual environment outside the repo and install the packaging tools.
+
+```sh
+python3 -m venv "$HOME/.venvs/mini-system-monitor-dmg"
+source "$HOME/.venvs/mini-system-monitor-dmg/bin/activate"
+python -m pip install -r scripts/dmg-requirements.txt
+npm run build:dmg
+```
+
+The installer is written to `src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/`. On macOS, the standard Tauri build produces the app bundle. Use `build:dmg` for the drag-to-install layout. It uses local ad-hoc signing for the app and requires no Developer ID, notarization, or Finder automation.
+
 ### Tests
 
 ```sh
