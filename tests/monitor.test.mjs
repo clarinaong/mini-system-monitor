@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { setImmediate } from "node:timers/promises";
-import { emptySnapshot, graphPath, graphReadings, mergeSnapshot, monitorNow, sampleSnapshot } from "../src/monitor/history.ts";
+import { emptySnapshot, graphGeometry, graphReadings, mergeSnapshot, monitorNow, sampleSnapshot } from "../src/monitor/history.ts";
 import { subscribeToMetrics } from "../src/monitor/subscription.ts";
 
 function sample(sequence, monotonicMs = sequence * 1000, intervalMs = 1000) {
@@ -229,7 +229,7 @@ test("a sample collected under an older configuration cannot undo a saved interv
 
 test("graph x positions reflect actual 1, 5, and 10 second spacing", () => {
   const readings = [sample(1, 45_000), sample(2, 50_000, 5000), sample(3, 60_000, 10_000)];
-  const path = graphPath(graphReadings(readings, "memory"), 60_000);
+  const path = graphGeometry(graphReadings(readings, "memory"), 60_000, 300, 60).path;
   assert.equal(path, "M225.00,30.00 L250.00,30.00 L300.00,30.00");
 });
 
@@ -242,8 +242,8 @@ test("graphs omit old data and break across missing readings or excessive gaps",
     { value: 50, monotonicMs: 50_000, intervalMs: 1000 },
     { value: 50, monotonicMs: 51_000, intervalMs: 1000 },
   ];
-  assert.equal(graphPath(readings, 65_000), "M25.00,30.00 M35.00,30.00 M225.00,30.00 L230.00,30.00");
-  assert.equal(graphPath(readings, 120_000), "");
+  assert.equal(graphGeometry(readings, 65_000, 300, 60).path, "M25.00,30.00 M35.00,30.00 M225.00,30.00 L230.00,30.00");
+  assert.equal(graphGeometry(readings, 120_000, 300, 60).path, "");
 });
 
 test("CPU warmup yields no graph value and zero memory totals avoid division errors", () => {

@@ -50,11 +50,18 @@ export function graphReadings(history: MetricsSample[], metric: "cpu" | "memory"
   }));
 }
 
-export function graphPath(readings: GraphReading[], now: number, width = 300, height = 60): string {
+export function graphGeometry(readings: GraphReading[], now: number, width: number, height: number) {
   let path = "";
   let previous: GraphReading | null = null;
+  let nextEntry = Infinity;
+  let firstExpiry = Infinity;
   for (const reading of readings) {
-    if (reading.monotonicMs < now - HISTORY_WINDOW_MS || reading.monotonicMs > now) continue;
+    if (reading.monotonicMs > now) {
+      nextEntry = Math.min(nextEntry, reading.monotonicMs);
+      continue;
+    }
+    if (reading.monotonicMs < now - HISTORY_WINDOW_MS) continue;
+    firstExpiry = Math.min(firstExpiry, reading.monotonicMs + HISTORY_WINDOW_MS);
     if (reading.value === null || !Number.isFinite(reading.value)) { previous = null; continue; }
     const gap = previous && reading.monotonicMs - previous.monotonicMs > Math.max(previous.intervalMs, reading.intervalMs) * 1.5 + 250;
     const x = width * (1 - (now - reading.monotonicMs) / HISTORY_WINDOW_MS);
@@ -62,5 +69,5 @@ export function graphPath(readings: GraphReading[], now: number, width = 300, he
     path += `${previous && !gap ? "L" : "M"}${x.toFixed(2)},${y.toFixed(2)} `;
     previous = reading;
   }
-  return path.trim();
+  return { path: path.trim(), anchor: now, nextEntry, firstExpiry };
 }

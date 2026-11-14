@@ -1,6 +1,6 @@
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import type { GraphReading, MonitorClock } from "../types/system";
-import { graphPath, monitorNow } from "../monitor/history";
+import { graphGeometry, HISTORY_WINDOW_MS, monitorNow } from "../monitor/history";
 
 type UsageGraphProps = {
   data: GraphReading[];
@@ -16,16 +16,30 @@ function UsageGraph({ data, clock, active }: UsageGraphProps) {
   const pathRef = useRef<SVGPathElement>(null);
   const readingsRef = useRef(data);
   const clockRef = useRef(clock);
+  const geometryRef = useRef<ReturnType<typeof graphGeometry> | null>(null);
 
-  function draw(now: number) {
-    pathRef.current?.setAttribute("d", graphPath(readingsRef.current, monitorNow(clockRef.current, now), WIDTH, HEIGHT));
-  }
+  const draw = useCallback(() => {
+    const path = pathRef.current;
+    if (!path) return;
+    const now = monitorNow(clockRef.current, performance.now());
+    let geometry = geometryRef.current;
+    if (!geometry || now < geometry.anchor || now >= geometry.nextEntry || now > geometry.firstExpiry) {
+      geometry = graphGeometry(readingsRef.current, now, WIDTH, HEIGHT);
+      geometryRef.current = geometry;
+      path.setAttribute("d", geometry.path);
+      path.removeAttribute("transform");
+    } else if (geometry.path) {
+      const offset = (geometry.anchor - now) * WIDTH / HISTORY_WINDOW_MS;
+      path.setAttribute("transform", `translate(${offset} 0)`);
+    }
+  }, []);
 
   useLayoutEffect(() => {
     readingsRef.current = data;
     clockRef.current = clock;
-    draw(performance.now());
-  }, [data, clock]);
+    geometryRef.current = null;
+    draw();
+  }, [data, clock, draw]);
 
   useEffect(() => {
     let frameId: number | null = null;
@@ -39,7 +53,7 @@ function UsageGraph({ data, clock, active }: UsageGraphProps) {
 
     function animate() {
       frameId = null;
-      draw(performance.now());
+      draw();
       timerId = setTimeout(() => {
         timerId = null;
         frameId = requestAnimationFrame(animate);
@@ -48,7 +62,7 @@ function UsageGraph({ data, clock, active }: UsageGraphProps) {
 
     function updateAnimation() {
       stopAnimation();
-      draw(performance.now());
+      draw();
       if (active && !document.hidden && !motionPreference.matches) {
         frameId = requestAnimationFrame(animate);
       }
@@ -63,7 +77,7 @@ function UsageGraph({ data, clock, active }: UsageGraphProps) {
       document.removeEventListener("visibilitychange", updateAnimation);
       motionPreference.removeEventListener("change", updateAnimation);
     };
-  }, [active]);
+  }, [active, draw]);
 
   return (
     <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} preserveAspectRatio="none" role="img"

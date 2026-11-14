@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { MINUTE_MS, type HistoryRequest, type HistoryResult, type RawSample } from "./query";
 
 const WIDTH = 600;
@@ -82,7 +83,7 @@ export function HistoryGraph({ result, range, metric, incidentStart }: {
   incidentStart?: number;
 }) {
   const label = metric === "cpu" ? "CPU usage" : "RAM usage";
-  const { line, dots } = graphPaths(result, range, metric);
+  const { line, dots } = useMemo(() => graphPaths(result, range, metric), [result, range, metric]);
   const incidentX = incidentStart === undefined ? null : graphX(incidentStart, range);
 
   return (

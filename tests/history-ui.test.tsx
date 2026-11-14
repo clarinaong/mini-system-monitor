@@ -3,7 +3,7 @@ import { StrictMode } from "react";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, expect, test, vi } from "vitest";
 import HistoryWindow from "../src/history/HistoryWindow";
-import { graphPaths } from "../src/history/HistoryGraph";
+import { graphPaths, HistoryGraph } from "../src/history/HistoryGraph";
 import { HOUR_MS, MINUTE_MS, type HistoryRequest, type HistoryResult, type RawSample } from "../src/history/query";
 import { historySelection, type PerformanceSummary, type SummaryRequest } from "../src/history/summary";
 import type { SavedIncident } from "../src/history/incidents";
@@ -133,6 +133,33 @@ test("minute averages preserve missing buckets and clip edge points to the reque
   const paths = graphPaths({ ...result, rows: [...result.rows] }, request, "ram");
   expect(paths.line).toBe("M52.50 81.40 L201.00 81.40 M547.50 81.40");
   expect(paths.dots).toBe("M547.50 81.40h0");
+});
+
+test("reuses chart geometry across parent and marker updates, and redraws for new ranges and results", () => {
+  const range = { startMs: 0, endMs: MINUTE_MS, resolution: "raw" } as const;
+  const rows = vi.fn(() => [sample(0), sample(5_000)]);
+  const result = { resolution: "raw", get rows() { return rows(); } } as const;
+  const chart = (incidentStart?: number) => <HistoryGraph result={result} range={range} metric="cpu" incidentStart={incidentStart} />;
+  const { container, rerender } = render(<div data-status="loading">{chart()}</div>);
+  const line = container.querySelector(".history-line")!;
+  const originalPath = line.getAttribute("d");
+
+  rerender(<div data-status="settled">{chart()}</div>);
+  expect(rows).toHaveBeenCalledTimes(1);
+  rerender(<div>{chart(30_000)}</div>);
+  expect(rows).toHaveBeenCalledTimes(1);
+  expect(container.querySelector(".history-incident-line")).toHaveAttribute("x1", "300");
+  expect(line).toHaveAttribute("d", originalPath);
+
+  const wider = { ...range, endMs: 2 * MINUTE_MS };
+  rerender(<div><HistoryGraph result={result} range={wider} metric="cpu" incidentStart={30_000} /></div>);
+  expect(rows).toHaveBeenCalledTimes(2);
+  expect(container.querySelector(".history-incident-line")).toHaveAttribute("x1", "151.5");
+  expect(line.getAttribute("d")).not.toBe(originalPath);
+
+  rerender(<div><HistoryGraph result={{ resolution: "raw", rows: [sample(0, { cpuPercent: 100 })] }}
+    range={wider} metric="cpu" /></div>);
+  expect(container.querySelector(".history-dot")).toHaveAttribute("d", "M3.00 3.00h0");
 });
 
 test("filters incident types and statuses, then aligns both charts with the selected incident", async () => {

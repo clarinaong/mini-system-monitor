@@ -7,6 +7,9 @@ import { useSystemMetrics } from "./hooks/useSystemMetrics";
 import { graphReadings } from "./monitor/history";
 import { useSettings } from "./hooks/useSettings";
 import { useWidgetSize } from "./hooks/useWidgetSize";
+import type { GraphReading } from "./types/system";
+
+const EMPTY_GRAPH: GraphReading[] = [];
 
 function App() {
   const widget = useRef<HTMLElement>(null);
@@ -20,11 +23,16 @@ function App() {
   const allHidden = settings && !Object.values(settings.visibleCards).some(Boolean);
   const resizeError = useWidgetSize(widget, Boolean(settings && (metrics || allHidden)));
   const batteryHealth = latest?.metrics ? latest.health : successful?.health;
+  const showCpuGraph = settings?.visibleCards.cpu && settings.graphs.cpu;
+  const showMemoryGraph = settings?.visibleCards.memory && settings.graphs.memory;
+  const history = snapshot?.history;
   const cpuHistory = useMemo(
-    () => graphReadings(snapshot?.history ?? [], "cpu"), [snapshot?.history],
+    () => showCpuGraph && history ? graphReadings(history, "cpu") : EMPTY_GRAPH,
+    [showCpuGraph, history],
   );
   const memoryHistory = useMemo(
-    () => graphReadings(snapshot?.history ?? [], "memory"), [snapshot?.history],
+    () => showMemoryGraph && history ? graphReadings(history, "memory") : EMPTY_GRAPH,
+    [showMemoryGraph, history],
   );
   const message = resizeError ?? error ?? latest?.health.error ?? (
     stale ? "System readings are delayed. Showing the last available readings." : null
