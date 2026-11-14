@@ -114,12 +114,15 @@ pub fn run() {
             )?;
 
             // Create the menu bar icon
-            let tray_icon =
-                tauri::image::Image::from_bytes(include_bytes!("../icons/tray-icon.png"))?;
+            #[cfg(target_os = "macos")]
+            let tray_bytes = include_bytes!("../icons/tray-template.png");
+            #[cfg(not(target_os = "macos"))]
+            let tray_bytes = include_bytes!("../icons/tray-icon.png");
+            let tray_icon = tauri::image::Image::from_bytes(tray_bytes)?;
 
             TrayIconBuilder::new()
                 .icon(tray_icon)
-                .icon_as_template(false)
+                .icon_as_template(cfg!(target_os = "macos"))
                 .menu(&menu)
                 .show_menu_on_left_click(true)
                 .on_menu_event(|app, event| match event.id().as_ref() {
