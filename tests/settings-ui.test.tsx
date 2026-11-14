@@ -53,7 +53,7 @@ beforeEach(() => {
   mocks.onClose.mockImplementation(async handler => { closeHandler = handler; return () => {}; });
   const sample = {
     sequence: 1, configRevision: 0, timestampMs: Date.now(), monotonicMs: 1000, intervalMs: 1000,
-    metrics: { cpuUsage: 25, memoryUsed: 100, memoryTotal: 200, battery: { percentage: 80, status: "Charging" } },
+    metrics: { cpuUsage: 25, memoryUsed: 100, memoryTotal: 200, swapUsed: 2 * 2 ** 30, battery: { percentage: 80, status: "Charging" } },
     health: { status: "healthy" as const, error: null, batteryStatus: "available" as const, batteryError: null },
   };
   const view: MonitorView = {
@@ -64,6 +64,19 @@ beforeEach(() => {
 });
 
 describe("Settings window", () => {
+  test("saves swap visibility and retains it when the memory card is hidden", async () => {
+    const user = userEvent.setup();
+    render(<SettingsWindow />);
+    await loaded();
+    const swap = screen.getByRole("checkbox", { name: "Show swap used" });
+    expect(swap).not.toBeChecked();
+    await user.click(swap);
+    await user.click(screen.getByRole("checkbox", { name: "Show memory", exact: true }));
+    expect(swap).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(persisted.settings.showSwap).toBe(true));
+  });
+
   test("loads preferences and explains packaged notification requirements", async () => {
     render(<SettingsWindow />);
     await loaded();
@@ -322,6 +335,35 @@ describe("Settings window", () => {
 });
 
 describe("Widget preferences", () => {
+  test("shows swap beside the memory reading when enabled in compact mode", async () => {
+    persisted.settings.layout = "compact";
+    render(<App />);
+    const memory = (await screen.findByRole("heading", { name: "MEMORY" })).closest("section");
+    expect(memory).not.toHaveTextContent("Swap");
+    const updated = { ...persisted.settings, showSwap: true };
+    act(() => { callbacks.forEach(callback => callback({ payload: updated })); });
+    expect(memory?.querySelector(".memory-detail")).toHaveTextContent("0.0 / 0.0 GiB");
+    expect(memory?.querySelector(".memory-detail")).toHaveTextContent("Swap 2.0 GiB");
+    expect(memory?.querySelector(".metric-header")).not.toHaveTextContent("Swap");
+  });
+
+  test.each([
+    { charge: 21, status: "Discharging", expected: null },
+    { charge: 20, status: "Discharging", expected: "warning" },
+    { charge: 10, status: "Discharging", expected: "critical" },
+    { charge: 9, status: "Charging", expected: null },
+  ])("sets battery bar color at $charge% ($status)", async ({
+    charge, status, expected,
+  }) => {
+    const { view } = mocks.metrics();
+    Object.assign(view.snapshot.latest.metrics, {
+      battery: { percentage: charge, status },
+    });
+    render(<App />);
+    const heading = await screen.findByRole("heading", { name: "BATTERY" });
+    expect(heading.closest("section")?.getAttribute("data-severity")).toBe(expected);
+  });
+
   const combinations = Array.from({ length: 8 }, (_, mask) => ["expanded", "compact"].flatMap(layout =>
     Array.from({ length: 4 }, (_, graphs) => ({ mask, layout: layout as Settings["layout"], graphs })),
   )).flat();
@@ -348,10 +390,13 @@ describe("Widget preferences", () => {
     updated.visibleCards.cpu = false;
     updated.graphs.memory = false;
     updated.layout = "compact";
+    updated.showWarningColors = false;
+    expect(screen.getByRole("main")).toHaveAttribute("data-warning-colors", "true");
     act(() => { callbacks.forEach(callback => callback({ payload: updated })); });
     expect(screen.queryByRole("heading", { name: "CPU" })).not.toBeInTheDocument();
     expect(screen.queryAllByRole("img")).toHaveLength(0);
     expect(screen.getByRole("main")).toHaveClass("layout-compact");
+    expect(screen.getByRole("main")).toHaveAttribute("data-warning-colors", "false");
     expect(mocks.invoke.mock.calls.filter(call => call[0] === "get_settings")).toHaveLength(1);
   });
 });

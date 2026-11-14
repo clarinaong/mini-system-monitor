@@ -70,6 +70,7 @@ fn sample(sequence: u64, ms: u64) -> MetricsSample {
             cpu_usage: Some(0.0),
             memory_used: 500,
             memory_total: 1000,
+            swap_used: 0,
             battery: Some(BatteryMetrics {
                 percentage: 50.0,
                 status: "Discharging".into(),

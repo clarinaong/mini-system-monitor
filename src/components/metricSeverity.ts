@@ -1,0 +1,2 @@
+export const USAGE_WARNING_PERCENT = 80;
+export const USAGE_CRITICAL_PERCENT = 90;

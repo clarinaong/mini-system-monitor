@@ -8,6 +8,8 @@ export function settingsFixture(): Settings {
     appearance: "system",
     layout: "expanded",
     graphs: { cpu: true, memory: true },
+    showSwap: false,
+    showWarningColors: true,
     history: { recordingEnabled: false },
     alerts: {
       enabled: false,

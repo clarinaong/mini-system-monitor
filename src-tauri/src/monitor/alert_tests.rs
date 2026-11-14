@@ -72,6 +72,7 @@ impl Collector for TestCollector {
                     950
                 },
                 memory_total: 1000,
+                swap_used: 0,
                 battery: match reading {
                     Reading::BatteryError | Reading::Absent => None,
                     Reading::Battery { percentage, status } => Some(BatteryMetrics {

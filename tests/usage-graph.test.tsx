@@ -28,6 +28,10 @@ test("scrolls a delayed path through both fixed viewport edges without rewriting
   const original = "M0.00,60.00 L5.00,30.00 M295.00,18.00 L300.00,30.00 L305.00,0.00";
 
   expect(svg).toHaveAttribute("overflow", "hidden");
+  const gradient = svg.querySelector("linearGradient")!;
+  expect(path).toHaveAttribute("stroke", `url(#${gradient.id})`);
+  expect(Array.from(gradient.querySelectorAll("stop"), stop => stop.getAttribute("offset")))
+    .toEqual(["0%", "80%", "80%", "90%", "90%", "100%"]);
   expect(path).toHaveAttribute("d", original);
   localNow.mockReturnValue(500);
   act(() => vi.advanceTimersToNextFrame());

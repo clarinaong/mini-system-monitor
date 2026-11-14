@@ -159,6 +159,10 @@ function SettingsForm({ snapshot, loading, reload, acceptSaved }: FormProps) {
             disabled={!draft.visibleCards.cpu} onChange={value => change(next => { next.graphs.cpu = value; })} />
           <Check label="Show memory graph" checked={draft.visibleCards.memory && draft.graphs.memory}
             disabled={!draft.visibleCards.memory} onChange={value => change(next => { next.graphs.memory = value; })} />
+          <Check label="Show swap used" checked={draft.visibleCards.memory && draft.showSwap}
+            disabled={!draft.visibleCards.memory} onChange={value => change(next => { next.showSwap = value; })} />
+          <Check label="Show warning colors" checked={draft.showWarningColors}
+            onChange={value => change(next => { next.showWarningColors = value; })} />
         </div>
         <label className="settings-row" htmlFor="layout"><span>Layout</span>
           <select id="layout" value={draft.layout} onChange={event => change(next => { next.layout = event.target.value as Settings["layout"]; })}>

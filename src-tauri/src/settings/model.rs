@@ -11,6 +11,8 @@ pub struct Settings {
     pub layout: Layout,
     pub appearance: Appearance,
     pub graphs: GraphSettings,
+    pub show_swap: bool,
+    pub show_warning_colors: bool,
     pub alerts: AlertSettings,
     pub history: HistorySettings,
 }
@@ -24,6 +26,8 @@ impl Default for Settings {
             layout: Layout::Expanded,
             appearance: Appearance::System,
             graphs: GraphSettings::default(),
+            show_swap: false,
+            show_warning_colors: true,
             alerts: AlertSettings::default(),
             history: HistorySettings::default(),
         }

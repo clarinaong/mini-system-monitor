@@ -47,7 +47,8 @@ function App() {
     : "LIVE";
 
   return (
-    <main ref={widget} className={`container layout-${settings?.layout ?? "expanded"}`} data-tauri-drag-region>
+    <main ref={widget} className={`container layout-${settings?.layout ?? "expanded"}`}
+      data-warning-colors={settings?.showWarningColors} data-tauri-drag-region>
       <header className="dashboard-header">
         <h1>System Monitor</h1>
         <span
@@ -84,6 +85,7 @@ function App() {
             {settings.visibleCards.memory && <MemoryMonitor
               usedMemory={metrics.memoryUsed}
               totalMemory={metrics.memoryTotal}
+              swapUsed={settings.showSwap ? metrics.swapUsed : null}
               history={memoryHistory}
               clock={view.clock}
               active={visible}

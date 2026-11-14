@@ -16,6 +16,7 @@ fn sample(sequence: u64, monotonic_ms: u64) -> MetricsSample {
             cpu_usage: Some(25.0),
             memory_used: 10,
             memory_total: 20,
+            swap_used: 0,
             battery: None,
         }),
         health: SampleHealth {

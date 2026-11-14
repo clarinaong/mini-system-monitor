@@ -7,7 +7,7 @@ import { subscribeToMetrics } from "../src/monitor/subscription.ts";
 function sample(sequence, monotonicMs = sequence * 1000, intervalMs = 1000) {
   return {
     sequence, configRevision: 0, timestampMs: 1_800_000_000_000 + monotonicMs, monotonicMs, intervalMs,
-    metrics: { cpuUsage: sequence, memoryUsed: 512, memoryTotal: 1024, battery: null },
+    metrics: { cpuUsage: sequence, memoryUsed: 512, memoryTotal: 1024, swapUsed: 0, battery: null },
     health: { status: "healthy", error: null, batteryStatus: "absent", batteryError: null },
   };
 }

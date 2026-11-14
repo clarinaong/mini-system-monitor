@@ -75,6 +75,7 @@ impl Collector for HardwareCollector {
                 cpu_usage: cpu_ready.then(|| self.system.global_cpu_usage().clamp(0.0, 100.0)),
                 memory_used: self.system.used_memory(),
                 memory_total: self.system.total_memory(),
+                swap_used: self.system.used_swap(),
                 battery,
             },
             battery_error,

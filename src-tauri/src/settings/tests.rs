@@ -39,6 +39,8 @@ fn changed_settings() -> Settings {
     };
     settings.visible_cards.battery = false;
     settings.graphs.cpu = false;
+    settings.show_swap = true;
+    settings.show_warning_colors = false;
     settings.alerts.enabled = true;
     settings.alerts.cpu.threshold_percent = 75;
     settings.alerts.battery_charging.enabled = false;
@@ -66,6 +68,8 @@ fn defaults_and_camel_case_serialization_contract() {
         "layout": "expanded",
         "appearance": "system",
         "graphs": { "cpu": true, "memory": true },
+        "showSwap": false,
+        "showWarningColors": true,
         "alerts": {
             "enabled": false,
             "cpu": { "enabled": true, "thresholdPercent": 90, "sustainedSeconds": 30 },
@@ -115,6 +119,8 @@ fn missing_top_level_and_nested_fields_receive_contextual_defaults() {
     assert_eq!(partial.alerts.battery_charging.threshold_percent, 80);
     assert_eq!(partial.alerts.cooldown_seconds, 600);
     assert!(!partial.history.recording_enabled);
+    assert!(!partial.show_swap);
+    assert!(partial.show_warning_colors);
     partial.validate().unwrap();
 }
 

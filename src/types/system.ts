@@ -2,6 +2,7 @@ export type SystemMetrics = {
   cpuUsage: number | null;
   memoryUsed: number;
   memoryTotal: number;
+  swapUsed: number;
   battery: BatteryMetrics | null;
 };
 

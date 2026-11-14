@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef } from "react";
 import type { GraphReading, MonitorClock } from "../types/system";
 import { graphGeometry, HISTORY_WINDOW_MS, monitorNow } from "../monitor/history";
+import { USAGE_CRITICAL_PERCENT, USAGE_WARNING_PERCENT } from "./metricSeverity";
 
 type UsageGraphProps = {
   data: GraphReading[];
@@ -13,6 +14,7 @@ const WIDTH = 300;
 const HEIGHT = 60;
 
 function UsageGraph({ data, clock, active, delayMs }: UsageGraphProps) {
+  const gradientId = useId();
   const pathRef = useRef<SVGPathElement>(null);
   const readingsRef = useRef(data);
   const timingRef = useRef({ clock, delayMs });
@@ -77,10 +79,20 @@ function UsageGraph({ data, clock, active, delayMs }: UsageGraphProps) {
   return (
     <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} preserveAspectRatio="none" overflow="hidden" role="img"
       aria-label="System usage over a 60-second window">
+      <defs>
+        <linearGradient id={gradientId} gradientUnits="userSpaceOnUse" x1="0" x2="0" y1={HEIGHT} y2="0">
+          <stop offset="0%" className="usage-stop-normal" />
+          <stop offset={`${USAGE_WARNING_PERCENT}%`} className="usage-stop-normal" />
+          <stop offset={`${USAGE_WARNING_PERCENT}%`} className="usage-stop-warning" />
+          <stop offset={`${USAGE_CRITICAL_PERCENT}%`} className="usage-stop-warning" />
+          <stop offset={`${USAGE_CRITICAL_PERCENT}%`} className="usage-stop-critical" />
+          <stop offset="100%" className="usage-stop-critical" />
+        </linearGradient>
+      </defs>
       <line x1="0" y1={HEIGHT * 0.25} x2={WIDTH} y2={HEIGHT * 0.25} className="graph-gridline" />
       <line x1="0" y1={HEIGHT * 0.5} x2={WIDTH} y2={HEIGHT * 0.5} className="graph-gridline" />
       <line x1="0" y1={HEIGHT * 0.75} x2={WIDTH} y2={HEIGHT * 0.75} className="graph-gridline" />
-      <path ref={pathRef} d="" fill="none" strokeWidth="2"
+      <path ref={pathRef} d="" fill="none" stroke={`url(#${gradientId})`} strokeWidth="2"
         strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );

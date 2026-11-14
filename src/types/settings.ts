@@ -7,6 +7,8 @@ export type Settings = {
   appearance: Appearance;
   layout: "expanded" | "compact";
   graphs: { cpu: boolean; memory: boolean };
+  showSwap: boolean;
+  showWarningColors: boolean;
   history: { recordingEnabled: boolean };
   alerts: {
     enabled: boolean; // Master switch; false by default.

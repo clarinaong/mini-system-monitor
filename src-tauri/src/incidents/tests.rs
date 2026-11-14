@@ -14,6 +14,7 @@ fn sample(sequence: u64, seconds: u64, interval: u64, cpu: Option<f32>) -> Metri
             cpu_usage: cpu,
             memory_used: 1024 * MIB,
             memory_total: 4096 * MIB,
+            swap_used: 0,
             battery: None,
         }),
         health: SampleHealth {

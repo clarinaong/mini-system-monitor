@@ -12,8 +12,12 @@ function BatteryMonitor({ battery, health }: BatteryMonitorProps) {
     ? Math.max(0, Math.min(100, battery.percentage))
     : 0;
 
+  const severity = battery?.status === "Discharging"
+    ? percentage <= 10 ? "critical" : percentage <= 20 ? "warning" : undefined
+    : undefined;
+
   return (
-    <section className="metric-section">
+    <section className="metric-section" data-severity={severity}>
       <div className="metric-header">
         <h2 className="metric-label">BATTERY</h2>
 
