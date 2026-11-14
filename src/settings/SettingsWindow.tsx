@@ -207,8 +207,8 @@ function SettingsForm({ snapshot, loading, reload, acceptSaved }: FormProps) {
           {field("batteryLow", "Low battery threshold (%)", draft.alerts.batteryLow.thresholdPercent, 1, 100, (next, value) => { next.alerts.batteryLow.thresholdPercent = value; })}
         </div>
         <div className="settings-rule">
-          <Check label="Charging reminder" checked={draft.alerts.batteryCharging.enabled} onChange={value => change(next => { next.alerts.batteryCharging.enabled = value; })} />
-          {field("batteryCharging", "Charging reminder threshold (%)", draft.alerts.batteryCharging.thresholdPercent, 1, 100, (next, value) => { next.alerts.batteryCharging.thresholdPercent = value; })}
+          <Check label="Notify when charge target is reached" checked={draft.alerts.batteryCharging.enabled} onChange={value => change(next => { next.alerts.batteryCharging.enabled = value; })} />
+          {field("batteryCharging", "Charge target (%)", draft.alerts.batteryCharging.thresholdPercent, 1, 100, (next, value) => { next.alerts.batteryCharging.thresholdPercent = value; })}
         </div>
         {field("cooldown", "Cooldown seconds per rule", draft.alerts.cooldownSeconds, 1, 86400, (next, value) => { next.alerts.cooldownSeconds = value; })}
         <Check label="Notification sound" checked={draft.alerts.notificationSound} onChange={value => change(next => { next.alerts.notificationSound = value; })} />

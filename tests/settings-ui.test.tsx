@@ -86,7 +86,8 @@ describe("Settings window", () => {
     expect(screen.getByLabelText("Layout")).toHaveValue("expanded");
     expect(screen.getByLabelText("Enable alerts")).not.toBeChecked();
     expect(screen.getByLabelText("CPU threshold (%)")).toHaveValue(90);
-    expect(screen.getByLabelText("Charging reminder threshold (%)")).toHaveValue(80);
+    expect(screen.getByLabelText("Notify when charge target is reached")).toBeChecked();
+    expect(screen.getByLabelText("Charge target (%)")).toHaveValue(80);
     expect(screen.getByText("Automatic alert delivery requires a packaged macOS release app")).toBeVisible();
     expect(screen.getByRole("button", { name: "Apply" })).toBeDisabled();
     expect(mocks.invoke).not.toHaveBeenCalledWith("get_system_metrics");

@@ -78,12 +78,12 @@ fn all_rule_messages_use_observed_values_and_saved_sound_but_test_stays_silent()
         let messages = backend.messages.lock().unwrap();
         assert_eq!(messages.len(), 4);
         for (message, title) in messages.iter().zip([
-            "High CPU usage",
-            "High memory usage",
-            "Low battery",
-            "Charging reminder",
+            "Mini System Monitor — High CPU usage",
+            "Mini System Monitor — High memory usage",
+            "Mini System Monitor — Low battery",
+            "Charge target reached.",
         ]) {
-            assert!(message.title.ends_with(title));
+            assert_eq!(message.title, title);
             assert!(message.body.contains("95.5%"));
             assert!(message.body.contains("90%"));
             assert_eq!(message.sound, sound);

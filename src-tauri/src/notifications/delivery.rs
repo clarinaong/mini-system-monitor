@@ -21,7 +21,7 @@ impl Message {
         let (enabled, title, body) = match alert.rule {
             AlertRule::Cpu => (
                 rules.cpu.enabled,
-                "High CPU usage",
+                "Mini System Monitor — High CPU usage",
                 format!(
                     "CPU usage is {:.1}% (threshold {}%).",
                     alert.value_percent, alert.threshold_percent
@@ -29,7 +29,7 @@ impl Message {
             ),
             AlertRule::Memory => (
                 rules.memory.enabled,
-                "High memory usage",
+                "Mini System Monitor — High memory usage",
                 format!(
                     "Memory usage is {:.1}% (threshold {}%).",
                     alert.value_percent, alert.threshold_percent
@@ -37,7 +37,7 @@ impl Message {
             ),
             AlertRule::BatteryLow => (
                 rules.battery_low.enabled,
-                "Low battery",
+                "Mini System Monitor — Low battery",
                 format!(
                     "Battery is at {:.1}% (reminder at {}%).",
                     alert.value_percent, alert.threshold_percent
@@ -45,15 +45,15 @@ impl Message {
             ),
             AlertRule::BatteryCharging => (
                 rules.battery_charging.enabled,
-                "Charging reminder",
+                "Charge target reached.",
                 format!(
-                    "Battery has reached {:.1}% (reminder at {}%).",
+                    "Battery is at {:.1}% (target {}%). You can unplug the charger.",
                     alert.value_percent, alert.threshold_percent
                 ),
             ),
         };
         (rules.enabled && enabled).then(|| Self {
-            title: format!("Mini System Monitor — {title}"),
+            title: title.into(),
             body,
             sound: rules.notification_sound,
         })
