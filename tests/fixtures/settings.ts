@@ -5,6 +5,7 @@ export function settingsFixture(): Settings {
     version: 1,
     monitoringIntervalSeconds: 1,
     visibleCards: { cpu: true, memory: true, battery: true },
+    appearance: "system",
     layout: "expanded",
     graphs: { cpu: true, memory: true },
     history: { recordingEnabled: false },

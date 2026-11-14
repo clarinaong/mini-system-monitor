@@ -1,7 +1,10 @@
+export type Appearance = "system" | "light" | "dark";
+
 export type Settings = {
   version: 1;
   monitoringIntervalSeconds: 1 | 2 | 5 | 10;
   visibleCards: { cpu: boolean; memory: boolean; battery: boolean };
+  appearance: Appearance;
   layout: "expanded" | "compact";
   graphs: { cpu: boolean; memory: boolean };
   history: { recordingEnabled: boolean };

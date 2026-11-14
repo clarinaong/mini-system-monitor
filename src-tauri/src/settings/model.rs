@@ -9,6 +9,7 @@ pub struct Settings {
     pub monitoring_interval_seconds: u8,
     pub visible_cards: VisibleCards,
     pub layout: Layout,
+    pub appearance: Appearance,
     pub graphs: GraphSettings,
     pub alerts: AlertSettings,
     pub history: HistorySettings,
@@ -21,6 +22,7 @@ impl Default for Settings {
             monitoring_interval_seconds: 1,
             visible_cards: VisibleCards::default(),
             layout: Layout::Expanded,
+            appearance: Appearance::System,
             graphs: GraphSettings::default(),
             alerts: AlertSettings::default(),
             history: HistorySettings::default(),
@@ -57,6 +59,14 @@ impl Default for VisibleCards {
 pub enum Layout {
     Expanded,
     Compact,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Appearance {
+    System,
+    Light,
+    Dark,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

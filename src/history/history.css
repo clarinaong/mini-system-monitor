@@ -1,6 +1,6 @@
 body.history-window {
-  background: #f4f6f9;
-  color: #262b33;
+  background: var(--window);
+  color: var(--text);
 }
 
 .history-page {
@@ -26,7 +26,7 @@ body.history-window {
 .history-header p,
 .history-resolution {
   margin: 6px 0 0;
-  color: #4c5a6a;
+  color: var(--muted);
   font-size: 13px;
 }
 
@@ -43,9 +43,9 @@ body.history-window {
 
 .history-page :is(select, button) {
   padding: 6px 10px;
-  border: 1px solid #abb5c0;
+  border: 1px solid var(--control-border);
   border-radius: 6px;
-  background: #fff;
+  background: var(--surface);
   color: inherit;
   font: inherit;
 }
@@ -62,9 +62,9 @@ body.history-window {
 .history-chart,
 .history-message {
   padding: 14px 16px;
-  border: 1px solid #dce2e9;
+  border: 1px solid var(--divider);
   border-radius: 10px;
-  background: #fff;
+  background: var(--surface);
 }
 
 .history-chart h2 {
@@ -88,7 +88,7 @@ body.history-window {
 .history-chart-time {
   display: flex;
   justify-content: space-between;
-  color: #4c5a6a;
+  color: var(--muted);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
@@ -110,12 +110,12 @@ body.history-window {
 }
 
 .history-grid {
-  stroke: #dce2e9;
+  stroke: var(--divider);
 }
 
 .history-line,
 .history-dot {
-  stroke: #356ba0;
+  stroke: var(--chart-line);
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
@@ -142,7 +142,7 @@ body.history-window {
 }
 
 .incident-details dt {
-  color: #4c5a6a;
+  color: var(--muted);
 }
 
 .incident-details dd {
@@ -150,7 +150,7 @@ body.history-window {
 }
 
 .history-incident-line {
-  stroke: #925422;
+  stroke: var(--incident);
   stroke-dasharray: 4 3;
   vector-effect: non-scaling-stroke;
 }
@@ -194,8 +194,8 @@ body.history-window {
 }
 
 .incident-timeline li button[aria-pressed="true"] {
-  border-color: #356ba0;
-  background: #eaf2fa;
+  border-color: var(--chart-line);
+  background: var(--tint);
 }
 
 .history-summary {
@@ -205,7 +205,7 @@ body.history-window {
 .history-summary > p,
 .history-summary-metrics p {
   margin: 8px 0 0;
-  color: #4c5a6a;
+  color: var(--muted);
   font-size: 13px;
 }
 
@@ -235,7 +235,7 @@ body.history-window {
 
 .history-summary :is(th, td) {
   padding: 4px;
-  border-bottom: 1px solid #dce2e9;
+  border-bottom: 1px solid var(--divider);
   text-align: left;
 }
 

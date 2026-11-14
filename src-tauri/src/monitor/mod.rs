@@ -17,8 +17,8 @@ use std::{
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 pub const METRICS_EVENT: &str = "system-metrics";
-pub const HISTORY_WINDOW_MS: u64 = 60_000;
-const MAX_SAMPLES: usize = 61;
+const GRAPH_RETENTION_MS: u64 = 90_000;
+const MAX_SAMPLES: usize = 91;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -88,7 +88,7 @@ pub struct MonitorSnapshot {
 
 impl MonitorSnapshot {
     fn record(&mut self, sample: MetricsSample) {
-        let cutoff = sample.monotonic_ms.saturating_sub(HISTORY_WINDOW_MS);
+        let cutoff = sample.monotonic_ms.saturating_sub(GRAPH_RETENTION_MS);
         while self
             .history
             .front()

@@ -1,3 +1,4 @@
+import { useAppearance } from "./hooks/useAppearance";
 import { useMemo, useRef } from "react";
 import "./App.css";
 import CpuMonitor from "./components/CpuMonitor";
@@ -15,8 +16,10 @@ function App() {
   const widget = useRef<HTMLElement>(null);
   const preferences = useSettings();
   const settings = preferences.snapshot?.settings;
+  useAppearance(settings?.appearance);
   const { view, error, visible, stale } = useSystemMetrics();
   const snapshot = view?.snapshot;
+  const graphDelayMs = (snapshot?.monitoringIntervalSeconds ?? 1) * 1000 + 250;
   const latest = snapshot?.latest;
   const successful = snapshot?.lastSuccessful;
   const metrics = successful?.metrics;
@@ -75,6 +78,7 @@ function App() {
               history={cpuHistory}
               clock={view.clock}
               active={visible}
+              graphDelayMs={graphDelayMs}
               showGraph={settings.graphs.cpu}
             />}
             {settings.visibleCards.memory && <MemoryMonitor
@@ -83,6 +87,7 @@ function App() {
               history={memoryHistory}
               clock={view.clock}
               active={visible}
+              graphDelayMs={graphDelayMs}
               showGraph={settings.graphs.memory}
             />}
             {settings.visibleCards.battery && <BatteryMonitor battery={metrics.battery} health={batteryHealth} />}

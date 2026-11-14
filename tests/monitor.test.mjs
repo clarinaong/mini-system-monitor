@@ -194,10 +194,10 @@ test("multiple independent subscribers only retrieve cached snapshots", async ()
 test("history retention uses elapsed time with a fixed memory bound", () => {
   const fast = Array.from({ length: 150 }, (_, index) => sample(index + 1));
   const merged = mergeSnapshot(emptySnapshot(), snapshot(fast));
-  assert.equal(merged.history.length, 61);
-  assert.equal(merged.history[0].monotonicMs, 90_000);
+  assert.equal(merged.history.length, 91);
+  assert.equal(merged.history[0].monotonicMs, 60_000);
   const slow = Array.from({ length: 12 }, (_, index) => sample(index + 1, index * 10_000, 10_000));
-  assert.equal(mergeSnapshot(emptySnapshot(), snapshot(slow, 110_000, 10)).history.length, 7);
+  assert.equal(mergeSnapshot(emptySnapshot(), snapshot(slow, 110_000, 10)).history.length, 10);
   assert.equal(mergeSnapshot(merged, snapshot([], 500_000)).history.length, 0);
 });
 

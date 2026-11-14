@@ -6,24 +6,25 @@ type UsageGraphProps = {
   data: GraphReading[];
   clock: MonitorClock;
   active: boolean;
+  delayMs: number;
 };
 
 const WIDTH = 300;
 const HEIGHT = 60;
-const FRAME_INTERVAL = 100;
 
-function UsageGraph({ data, clock, active }: UsageGraphProps) {
+function UsageGraph({ data, clock, active, delayMs }: UsageGraphProps) {
   const pathRef = useRef<SVGPathElement>(null);
   const readingsRef = useRef(data);
-  const clockRef = useRef(clock);
+  const timingRef = useRef({ clock, delayMs });
   const geometryRef = useRef<ReturnType<typeof graphGeometry> | null>(null);
 
   const draw = useCallback(() => {
     const path = pathRef.current;
     if (!path) return;
-    const now = monitorNow(clockRef.current, performance.now());
+    const { clock, delayMs } = timingRef.current;
+    const now = monitorNow(clock, performance.now()) - delayMs;
     let geometry = geometryRef.current;
-    if (!geometry || now < geometry.anchor || now >= geometry.nextEntry || now > geometry.firstExpiry) {
+    if (!geometry || now < geometry.anchor || (geometry.path && now > geometry.expiresAfter)) {
       geometry = graphGeometry(readingsRef.current, now, WIDTH, HEIGHT);
       geometryRef.current = geometry;
       path.setAttribute("d", geometry.path);
@@ -36,28 +37,22 @@ function UsageGraph({ data, clock, active }: UsageGraphProps) {
 
   useLayoutEffect(() => {
     readingsRef.current = data;
-    clockRef.current = clock;
+    timingRef.current = { clock, delayMs };
     geometryRef.current = null;
     draw();
-  }, [data, clock, draw]);
+  }, [data, clock, delayMs, draw]);
 
   useEffect(() => {
     let frameId: number | null = null;
-    let timerId: ReturnType<typeof setTimeout> | null = null;
     const motionPreference = window.matchMedia("(prefers-reduced-motion: reduce)");
 
     function stopAnimation() {
       if (frameId !== null) { cancelAnimationFrame(frameId); frameId = null; }
-      if (timerId !== null) { clearTimeout(timerId); timerId = null; }
     }
 
     function animate() {
-      frameId = null;
       draw();
-      timerId = setTimeout(() => {
-        timerId = null;
-        frameId = requestAnimationFrame(animate);
-      }, FRAME_INTERVAL);
+      frameId = requestAnimationFrame(animate);
     }
 
     function updateAnimation() {
@@ -80,12 +75,12 @@ function UsageGraph({ data, clock, active }: UsageGraphProps) {
   }, [active, draw]);
 
   return (
-    <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} preserveAspectRatio="none" role="img"
-      aria-label="System usage over the last 60 seconds">
+    <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} preserveAspectRatio="none" overflow="hidden" role="img"
+      aria-label="System usage over a 60-second window">
       <line x1="0" y1={HEIGHT * 0.25} x2={WIDTH} y2={HEIGHT * 0.25} className="graph-gridline" />
       <line x1="0" y1={HEIGHT * 0.5} x2={WIDTH} y2={HEIGHT * 0.5} className="graph-gridline" />
       <line x1="0" y1={HEIGHT * 0.75} x2={WIDTH} y2={HEIGHT * 0.75} className="graph-gridline" />
-      <path ref={pathRef} d="" fill="none" stroke="#839bb5" strokeWidth="2"
+      <path ref={pathRef} d="" fill="none" strokeWidth="2"
         strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );

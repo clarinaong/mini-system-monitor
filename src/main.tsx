@@ -1,5 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import "./appearance.css";
 import App from "./App";
 import SettingsWindow from "./settings/SettingsWindow";
 import HistoryWindow from "./history/HistoryWindow";

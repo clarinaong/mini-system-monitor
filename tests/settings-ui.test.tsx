@@ -94,7 +94,7 @@ describe("Settings window", () => {
     expect(otherGraph).toBeChecked();
     await user.click(graph);
     await user.click(screen.getByRole("button", { name: "Apply" }));
-    await screen.findByText("Preferences saved.");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Apply" })).toBeDisabled());
     expect(graph).toBeDisabled();
     expect(graph).not.toBeChecked();
     await user.click(card);
@@ -123,7 +123,7 @@ describe("Settings window", () => {
     expect(persisted.settings.history.recordingEnabled).toBe(false);
     expect(saves()).toHaveLength(0);
     await user.click(screen.getByRole("button", { name: "Apply" }));
-    await screen.findByText("Preferences saved.");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Apply" })).toBeDisabled());
     expect(persisted.settings.history.recordingEnabled).toBe(true);
   });
 
@@ -175,11 +175,48 @@ describe("Settings window", () => {
     expect(saves()).toHaveLength(0);
     expect(persisted.settings.layout).toBe("expanded");
     await user.click(screen.getByRole("button", { name: "Apply" }));
-    await screen.findByText("Preferences saved.");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Apply" })).toBeDisabled());
     expect(saves()).toHaveLength(1);
     expect(saves()[0][1].settings).toMatchObject({ layout: "compact", monitoringIntervalSeconds: 5, visibleCards: { cpu: false } });
     expect(screen.getByRole("button", { name: "Apply" })).toBeDisabled();
     expect(mocks.close).not.toHaveBeenCalled();
+  });
+
+  test("applies a saved color mode and follows system changes only in System mode", async () => {
+    const user = userEvent.setup();
+    const preference = Object.assign(new EventTarget(), { matches: false });
+    const media = vi.spyOn(window, "matchMedia").mockReturnValue(preference as unknown as MediaQueryList);
+    try {
+      render(<SettingsWindow />);
+      await loaded();
+      const mode = screen.getByLabelText("App color mode");
+      const root = document.documentElement;
+      expect(mode).toHaveValue("system");
+      expect(root).toHaveAttribute("data-appearance", "light");
+
+      await user.selectOptions(mode, "dark");
+      expect(root).toHaveAttribute("data-appearance", "light");
+      await user.click(screen.getByRole("button", { name: "Apply" }));
+      await waitFor(() => expect(screen.getByRole("button", { name: "Apply" })).toBeDisabled());
+      expect(persisted.settings.appearance).toBe("dark");
+      expect(root).toHaveAttribute("data-appearance", "dark");
+
+      preference.matches = true;
+      await user.selectOptions(mode, "light");
+      await user.click(screen.getByRole("button", { name: "Apply" }));
+      await waitFor(() => expect(root).toHaveAttribute("data-appearance", "light"));
+      act(() => preference.dispatchEvent(new Event("change")));
+      expect(root).toHaveAttribute("data-appearance", "light");
+
+      await user.selectOptions(mode, "system");
+      await user.click(screen.getByRole("button", { name: "Apply" }));
+      await waitFor(() => expect(root).toHaveAttribute("data-appearance", "dark"));
+      preference.matches = false;
+      act(() => preference.dispatchEvent(new Event("change")));
+      expect(root).toHaveAttribute("data-appearance", "light");
+    } finally {
+      media.mockRestore();
+    }
   });
 
   test("Cancel closes without saving and a new opening starts from persisted preferences", async () => {
@@ -225,7 +262,7 @@ describe("Settings window", () => {
     expect(screen.getByRole("button", { name: "Apply" })).toBeEnabled();
     fail = false;
     await user.click(screen.getByRole("button", { name: "Apply" }));
-    await screen.findByText("Preferences saved.");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Apply" })).toBeDisabled());
     expect(saves()).toHaveLength(2);
   });
 
@@ -236,14 +273,17 @@ describe("Settings window", () => {
     await loaded();
     fireEvent.click(screen.getByLabelText("Show CPU"));
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
-    expect(screen.getByRole("button", { name: "Saving…" })).toBeDisabled();
+    const applying = screen.getByRole("button", { name: "Applying preferences" });
+    expect(applying).toBeDisabled();
+    expect(applying).toHaveAttribute("aria-busy", "true");
+    expect(applying.querySelector(".settings-spinner")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
     expect(screen.getByLabelText("Show CPU")).toBeDisabled();
     const preventDefault = vi.fn();
     closeHandler({ preventDefault });
     expect(preventDefault).toHaveBeenCalledOnce();
     await act(async () => { pending.resolve(settingsFixture()); });
-    await screen.findByText("Preferences saved.");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Apply" })).toBeDisabled());
   });
 
   test("unreadable saved data blocks Apply until retry succeeds without losing the draft", async () => {

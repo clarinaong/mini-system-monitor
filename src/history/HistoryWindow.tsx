@@ -1,3 +1,4 @@
+import { useAppearance } from "../hooks/useAppearance";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSettings } from "../hooks/useSettings";
 import { HistoryGraph } from "./HistoryGraph";
@@ -52,6 +53,7 @@ export default function HistoryWindow() {
   const incidents = useHistoryRead(request, queryIncidents, pending, incidentAttempt, "incidents");
   const summary = useHistoryRead(selection.summary, querySummary, pending, summaryAttempt, "performance summary");
   const { snapshot, loading } = useSettings();
+  useAppearance(snapshot?.settings.appearance);
   const recording = snapshot?.settings.history.recordingEnabled;
 
   return (

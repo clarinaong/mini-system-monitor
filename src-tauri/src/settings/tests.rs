@@ -1,5 +1,5 @@
 use super::*;
-use model::{Layout, SETTINGS_VERSION};
+use model::{Appearance, Layout, SETTINGS_VERSION};
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -34,6 +34,7 @@ fn changed_settings() -> Settings {
     let mut settings = Settings {
         monitoring_interval_seconds: 5,
         layout: Layout::Compact,
+        appearance: Appearance::Dark,
         ..Settings::default()
     };
     settings.visible_cards.battery = false;
@@ -63,6 +64,7 @@ fn defaults_and_camel_case_serialization_contract() {
         "monitoringIntervalSeconds": 1,
         "visibleCards": { "cpu": true, "memory": true, "battery": true },
         "layout": "expanded",
+        "appearance": "system",
         "graphs": { "cpu": true, "memory": true },
         "alerts": {
             "enabled": false,
@@ -679,4 +681,11 @@ fn recovering_a_preserved_file_applies_its_rules_without_starting_a_worker() {
     assert_applied_preferences(&monitor, &changed_settings());
     assert_eq!(monitor.snapshot().unwrap().monitoring_interval_seconds, 5);
     assert!(monitor.snapshot().unwrap().latest.is_none());
+}
+
+#[test]
+fn appearance_defaults_to_system_and_rejects_unknown_choices() {
+    let legacy: Settings = serde_json::from_value(json!({ "version": 1 })).unwrap();
+    assert_eq!(legacy.appearance, Appearance::System);
+    assert!(serde_json::from_value::<Settings>(json!({ "appearance": "sepia" })).is_err());
 }

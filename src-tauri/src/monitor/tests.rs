@@ -246,8 +246,8 @@ fn history_is_bounded_by_elapsed_time_and_count_with_last_success_preserved() {
         clock.set(index * 1000);
         cache.record(sampler.sample_due().unwrap());
     }
-    assert_eq!(cache.history.len(), 61);
-    assert_eq!(cache.history.front().unwrap().monotonic_ms, 64_000);
+    assert_eq!(cache.history.len(), 91);
+    assert_eq!(cache.history.front().unwrap().monotonic_ms, 34_000);
     clock.set(300_000);
     cache.record(sampler.sample_due().unwrap());
     assert_eq!(cache.history.len(), 1);

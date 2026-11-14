@@ -8,10 +8,11 @@ type MemoryMonitorProps = {
   history: GraphReading[];
   clock: MonitorClock;
   active: boolean;
+  graphDelayMs: number;
   showGraph: boolean;
 };
 
-function MemoryMonitor({ usedMemory, totalMemory, history, clock, active, showGraph }: MemoryMonitorProps) {
+function MemoryMonitor({ usedMemory, totalMemory, history, clock, active, graphDelayMs, showGraph }: MemoryMonitorProps) {
   const memoryPercentage =
     totalMemory !== 0 ? (usedMemory / totalMemory) * 100 : 0;
 
@@ -31,7 +32,7 @@ function MemoryMonitor({ usedMemory, totalMemory, history, clock, active, showGr
       <p className="metric-detail memory-detail">
         {usedGiB.toFixed(1)} / {totalGiB.toFixed(1)} GiB
       </p>
-      {showGraph && <UsageGraph data={history} clock={clock} active={active} />}
+      {showGraph && <UsageGraph data={history} clock={clock} active={active} delayMs={graphDelayMs} />}
     </section>
   );
 }

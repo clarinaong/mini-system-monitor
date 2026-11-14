@@ -1,3 +1,4 @@
+import { useAppearance } from "../hooks/useAppearance";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -43,7 +44,6 @@ function SettingsForm({ snapshot, loading, reload, acceptSaved }: FormProps) {
   const savingRef = useRef(false);
   const [tried, setTried] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
   const dirty = JSON.stringify(draft) !== JSON.stringify(baseline);
   const errors = validateSettings(draft);
   const changedElsewhere = JSON.stringify(snapshot.settings) !== JSON.stringify(baseline);
@@ -71,7 +71,6 @@ function SettingsForm({ snapshot, loading, reload, acceptSaved }: FormProps) {
       update(next);
       return next;
     });
-    setSaved(false);
     setActionError(null);
   }
 
@@ -82,13 +81,11 @@ function SettingsForm({ snapshot, loading, reload, acceptSaved }: FormProps) {
     savingRef.current = true;
     setSaving(true);
     setActionError(null);
-    setSaved(false);
     try {
       const result = await invoke<Settings>("save_settings", { settings: draft });
       setDraft(structuredClone(result));
       setBaseline(result);
       acceptSaved(result);
-      setSaved(true);
       setTried(false);
     } catch (failure) {
       setActionError(settingsErrorMessage(failure, "Preferences could not be saved. Your edits are still here."));
@@ -131,7 +128,15 @@ function SettingsForm({ snapshot, loading, reload, acceptSaved }: FormProps) {
       </fieldset>
 
       <fieldset disabled={saving}>
-        <legend>Widget</legend>
+        <legend>Appearance</legend>
+        <label className="settings-row" htmlFor="appearance"><span>App color mode</span>
+          <select id="appearance" value={draft.appearance}
+            onChange={event => change(next => { next.appearance = event.target.value as Settings["appearance"]; })}>
+            <option value="system">System</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+        </label>
         <div className="settings-options">
           <Check label="Show CPU" checked={draft.visibleCards.cpu} onChange={value => change(next => { next.visibleCards.cpu = value; })} />
           <Check label="Show memory" checked={draft.visibleCards.memory} onChange={value => change(next => { next.visibleCards.memory = value; })} />
@@ -197,13 +202,13 @@ function SettingsForm({ snapshot, loading, reload, acceptSaved }: FormProps) {
       <div className="settings-feedback" aria-live="polite">
         {actionError && <p className="field-error" role="alert">{actionError}</p>}
         {tried && Object.keys(errors).length > 0 && <p className="field-error" role="alert">Correct the highlighted values before applying.</p>}
-        {saved && <p role="status">Preferences saved.</p>}
-        {saving && <p role="status">Saving preferences…</p>}
       </div>
       <div className="settings-actions">
         <button type="button" onClick={() => { void cancel(); }} disabled={saving}>Cancel</button>
-        <button className="primary" type="submit" disabled={!dirty || saving || loading || Boolean(snapshot.loadError)}>
-          {saving ? "Saving…" : "Apply"}
+        <button className="primary settings-apply" type="submit" disabled={!dirty || saving || loading || Boolean(snapshot.loadError)}
+          aria-busy={saving} aria-label={saving ? "Applying preferences" : undefined}>
+          <span className={saving ? "settings-apply-label-hidden" : undefined}>Apply</span>
+          {saving && <span className="settings-spinner" aria-hidden="true" />}
         </button>
       </div>
     </footer>
@@ -212,6 +217,7 @@ function SettingsForm({ snapshot, loading, reload, acceptSaved }: FormProps) {
 
 export default function SettingsWindow() {
   const { snapshot, error, loading, reload, acceptSaved } = useSettings();
+  useAppearance(snapshot?.settings.appearance);
   return <main className="settings-page">
     <header className="settings-header"><h1>Settings</h1><p>Make the widget work for you.</p></header>
     {error && <div className="settings-error" role="alert"><p>{error}</p>
