@@ -407,18 +407,18 @@ fn worker_caches_before_broadcast_and_recovers_for_multiple_subscribers() {
             );
         })
         .unwrap();
-    for (step, elapsed) in [0, 1000, 2000, 3000, 4000, 600_000, 601_000]
-        .into_iter()
-        .enumerate()
-    {
+    let elapsed_times = (0..5)
+        .map(|second| second * 1000)
+        .chain((600..=1200).map(|second| second * 1000));
+    for (step, elapsed) in elapsed_times.enumerate() {
         if step > 0 {
             now.store(elapsed, Ordering::SeqCst);
             state.recheck_deadline();
         }
         let first = received.recv_timeout(Duration::from_secs(2)).unwrap();
         let second = received.recv_timeout(Duration::from_secs(2)).unwrap();
-        history.wait_until_idle();
         if step == 0 {
+            history.wait_until_idle();
             let request = serde_json::from_value(serde_json::json!({
                 "startMs": 0, "endMs": 1, "resolution": "raw",
             }))
@@ -433,11 +433,18 @@ fn worker_caches_before_broadcast_and_recovers_for_multiple_subscribers() {
         assert_ne!(first.0, second.0);
         assert_eq!(first.1["sequence"], step + 1);
         assert_eq!(first.1["monotonicMs"], elapsed);
-        if elapsed == 600_000 {
-            let snapshot = state.snapshot().unwrap();
-            assert_eq!(snapshot.history.len(), 1);
-            assert_eq!(snapshot.history[0].monotonic_ms, 600_000);
-        }
+        let snapshot = state.snapshot().unwrap();
+        let run_start = if elapsed >= 600_000 { 600_000 } else { 0 };
+        let oldest = run_start.max(elapsed.saturating_sub(90_000));
+        assert_eq!(snapshot.history.len(), (elapsed - oldest) / 1000 + 1);
+        assert_eq!(
+            snapshot.history.front().unwrap().monotonic_ms,
+            oldest as u64
+        );
+        assert_eq!(
+            snapshot.history.back().unwrap().monotonic_ms,
+            elapsed as u64
+        );
         assert_eq!(first.1, second.1);
         assert_eq!(
             first.1["health"]["status"],
@@ -453,6 +460,7 @@ fn worker_caches_before_broadcast_and_recovers_for_multiple_subscribers() {
         assert_eq!(collections.load(Ordering::SeqCst), step + 1);
     }
     state.stop();
+    assert_eq!(collections.load(Ordering::SeqCst), 606);
     assert_eq!(std::fs::read(bad_path).unwrap(), b"Not a SQLite database");
 }
 
@@ -562,6 +570,66 @@ fn read_events(path: &std::path::Path) -> Vec<(i64, Option<i64>)> {
         .unwrap()
         .collect::<Result<Vec<_>, _>>()
         .unwrap()
+}
+
+#[test]
+fn recording_cadence_survives_widget_visibility_events() {
+    use tauri::{
+        Listener,
+        test::{mock_builder, mock_context, noop_assets},
+    };
+
+    let app = mock_builder().build(mock_context(noop_assets())).unwrap();
+    let widget = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+        .build()
+        .unwrap();
+    let (visibility, events) = mpsc::channel();
+    widget.listen("widget-visibility", move |event| {
+        visibility.send(event.payload() == "true").unwrap();
+    });
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("history.sqlite3");
+    let history = HistoryState::at_path(path.clone(), true).unwrap();
+    let monitor = MonitorState::new();
+    let (sampler, clock, calls) = sampler(1, 0, vec![]);
+
+    run_worker(
+        Arc::clone(&monitor.shared),
+        sampler,
+        Some(&history.recorder()),
+        |sample, _, _| {
+            history.wait_until_idle();
+            match sample.sequence {
+                5 => {
+                    widget.hide().unwrap();
+                    app.emit_to("main", "widget-visibility", false).unwrap();
+                    assert!(!events.recv_timeout(Duration::from_secs(2)).unwrap());
+                }
+                15 => {
+                    widget.show().unwrap();
+                    app.emit_to("main", "widget-visibility", true).unwrap();
+                    assert!(events.recv_timeout(Duration::from_secs(2)).unwrap());
+                }
+                21 => monitor.stop(),
+                _ => {}
+            }
+            clock.set(sample.monotonic_ms + 1000);
+        },
+    );
+    history.stop();
+    assert_eq!(calls.borrow().len(), 21);
+    let connection = rusqlite::Connection::open(path).unwrap();
+    let rows = connection
+        .prepare("SELECT sequence, monotonic_ms FROM metric_samples ORDER BY sequence")
+        .unwrap()
+        .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(
+        rows,
+        [(1, 0), (6, 5000), (11, 10_000), (16, 15_000), (21, 20_000)]
+    );
 }
 
 #[test]

@@ -245,6 +245,90 @@ fn saved_preferences_survive_a_new_app_instance() {
 }
 
 #[test]
+fn restored_recording_preferences_preserve_history_and_start_a_new_session() {
+    use crate::{
+        history::{HistoryState, recorder::query_history},
+        monitor::{BatteryStatus, MetricsSample, SampleHealth, SampleStatus},
+    };
+
+    let directory = tempfile::tempdir().unwrap();
+    let settings_path = directory.path().join("settings.json");
+    let history_path = directory.path().join("history.sqlite3");
+    let expected = changed_settings();
+    let start_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let record = |app: &tauri::App<_>, timestamp_ms| {
+        let history = app.state::<HistoryState>();
+        let recorder = history.recorder();
+        recorder.offer(
+            recorder.generation().unwrap(),
+            &MetricsSample {
+                sequence: 1,
+                config_revision: 0,
+                timestamp_ms,
+                monotonic_ms: 0,
+                interval_ms: 5000,
+                metrics: None,
+                health: SampleHealth {
+                    status: SampleStatus::Error,
+                    battery_status: BatteryStatus::Unavailable,
+                    error: None,
+                    battery_error: None,
+                },
+            },
+            5000,
+        );
+        history.wait_until_idle();
+    };
+    let read_rows = |app: &tauri::App<_>| {
+        let request = serde_json::from_value(json!({
+            "startMs": start_ms, "endMs": start_ms + 10_000, "resolution": "raw"
+        }))
+        .unwrap();
+        let result =
+            tauri::async_runtime::block_on(query_history(app.handle().clone(), request)).unwrap();
+        serde_json::to_value(result).unwrap()["rows"]
+            .as_array()
+            .unwrap()
+            .clone()
+    };
+
+    let first_rows = {
+        let app = app(false);
+        app.manage(state(&app, &settings_path));
+        app.manage(HistoryState::at_path(history_path.clone(), false).unwrap());
+        tauri::async_runtime::block_on(save_settings(app.handle().clone(), expected.clone()))
+            .unwrap();
+        record(&app, start_ms);
+        let rows = read_rows(&app);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["timestampMs"], start_ms);
+        app.state::<HistoryState>().stop();
+        rows
+    };
+
+    let restarted = app(false);
+    let restored = state(&restarted, &settings_path);
+    let preferences = restored.current_settings().unwrap();
+    assert_eq!(preferences, expected);
+    restarted.manage(restored);
+    restarted.manage(
+        HistoryState::at_path(history_path, preferences.history.recording_enabled).unwrap(),
+    );
+    assert_eq!(read_rows(&restarted), first_rows);
+    record(&restarted, start_ms + 5000);
+    let rows = read_rows(&restarted);
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0], first_rows[0]);
+    assert_eq!(rows[1]["timestampMs"], start_ms + 5000);
+    assert_eq!(rows[1]["sequence"], rows[0]["sequence"]);
+    assert_ne!(rows[1]["sessionId"], rows[0]["sessionId"]);
+    restarted.state::<HistoryState>().stop();
+}
+
+#[test]
 fn partial_store_defaults_do_not_rewrite_original_bytes() {
     use tauri_plugin_store::StoreExt;
     let app = app(false);
