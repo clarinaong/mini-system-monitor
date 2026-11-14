@@ -407,11 +407,13 @@ fn worker_caches_before_broadcast_and_recovers_for_multiple_subscribers() {
             );
         })
         .unwrap();
-    for step in 0..6 {
+    for (step, elapsed) in [0, 1000, 2000, 3000, 4000, 600_000, 601_000]
+        .into_iter()
+        .enumerate()
+    {
         if step > 0 {
-            let _control = state.shared.control.lock().unwrap();
-            now.store(step * 1000, Ordering::SeqCst);
-            state.shared.wake.notify_one();
+            now.store(elapsed, Ordering::SeqCst);
+            state.recheck_deadline();
         }
         let first = received.recv_timeout(Duration::from_secs(2)).unwrap();
         let second = received.recv_timeout(Duration::from_secs(2)).unwrap();
@@ -430,6 +432,12 @@ fn worker_caches_before_broadcast_and_recovers_for_multiple_subscribers() {
         }
         assert_ne!(first.0, second.0);
         assert_eq!(first.1["sequence"], step + 1);
+        assert_eq!(first.1["monotonicMs"], elapsed);
+        if elapsed == 600_000 {
+            let snapshot = state.snapshot().unwrap();
+            assert_eq!(snapshot.history.len(), 1);
+            assert_eq!(snapshot.history[0].monotonic_ms, 600_000);
+        }
         assert_eq!(first.1, second.1);
         assert_eq!(
             first.1["health"]["status"],

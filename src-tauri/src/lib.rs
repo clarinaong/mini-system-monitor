@@ -1,6 +1,8 @@
 mod alerts;
 mod history;
 mod incidents;
+#[cfg(target_os = "macos")]
+mod macos_lifecycle;
 mod monitor;
 mod notifications;
 mod settings;
@@ -26,6 +28,8 @@ use objc2_app_kit::{NSWindow, NSWindowCollectionBehavior};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "macos")]
+    let mut lifecycle = None;
     tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_notification::init())
@@ -120,10 +124,12 @@ pub fn run() {
                 .show_menu_on_left_click(true)
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "show" => {
-                        if let Some(window) = app.get_webview_window("main")
-                            && window.show().is_ok()
-                        {
-                            let _ = app.emit_to("main", "widget-visibility", true);
+                        if let Some(window) = app.get_webview_window("main") {
+                            #[cfg(target_os = "macos")]
+                            macos_lifecycle::recover_widget(app);
+                            if window.show().is_ok() {
+                                let _ = app.emit_to("main", "widget-visibility", true);
+                            }
                         }
                     }
 
@@ -163,8 +169,15 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app, event| {
+        .run(move |app, event| {
+            #[cfg(target_os = "macos")]
+            if matches!(event, tauri::RunEvent::Ready) {
+                lifecycle = Some(macos_lifecycle::Observers::register(app));
+                macos_lifecycle::recover_widget(app);
+            }
             if matches!(event, tauri::RunEvent::Exit) {
+                #[cfg(target_os = "macos")]
+                drop(lifecycle.take());
                 if let Some(monitor) = app.try_state::<MonitorState>() {
                     monitor.stop();
                 }

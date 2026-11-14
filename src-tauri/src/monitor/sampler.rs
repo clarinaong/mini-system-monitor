@@ -1,7 +1,7 @@
 use super::{BatteryStatus, MetricsSample, SampleHealth, SampleStatus, collector::Collector};
 use std::{
     panic::{AssertUnwindSafe, catch_unwind},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 pub(super) trait Clock {
@@ -9,19 +9,63 @@ pub(super) trait Clock {
     fn timestamp_ms(&self) -> u64;
 }
 
+#[derive(Clone, Copy)]
 pub(super) struct RealClock {
-    start: Instant,
+    start: Duration,
+}
+
+#[cfg(target_os = "macos")]
+fn monotonic_time() -> Duration {
+    use std::sync::OnceLock;
+
+    #[repr(C)]
+    struct Timebase {
+        numer: u32,
+        denom: u32,
+    }
+
+    unsafe extern "C" {
+        fn mach_timebase_info(info: *mut Timebase) -> i32;
+        fn mach_continuous_time() -> u64;
+    }
+
+    static TIMEBASE: OnceLock<Timebase> = OnceLock::new();
+    let timebase = TIMEBASE.get_or_init(|| {
+        let mut info = Timebase { numer: 0, denom: 0 };
+        let status = unsafe { mach_timebase_info(&mut info) };
+        assert!(status == 0 && info.denom != 0, "Mach timebase unavailable");
+        info
+    });
+    let ticks = unsafe { mach_continuous_time() };
+    let nanos = u128::from(ticks) * u128::from(timebase.numer) / u128::from(timebase.denom);
+    Duration::new(
+        (nanos / 1_000_000_000) as u64,
+        (nanos % 1_000_000_000) as u32,
+    )
+}
+
+#[cfg(not(target_os = "macos"))]
+fn monotonic_time() -> Duration {
+    use std::{sync::OnceLock, time::Instant};
+    static START: OnceLock<Instant> = OnceLock::new();
+    START.get_or_init(Instant::now).elapsed()
 }
 
 impl RealClock {
-    pub fn new(start: Instant) -> Self {
-        Self { start }
+    pub fn new() -> Self {
+        Self {
+            start: monotonic_time(),
+        }
+    }
+
+    pub fn elapsed(self) -> Duration {
+        monotonic_time().saturating_sub(self.start)
     }
 }
 
 impl Clock for RealClock {
     fn monotonic(&self) -> Duration {
-        self.start.elapsed()
+        self.elapsed()
     }
     fn timestamp_ms(&self) -> u64 {
         SystemTime::now()

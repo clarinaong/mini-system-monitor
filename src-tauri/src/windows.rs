@@ -1,6 +1,4 @@
-use tauri::{
-    AppHandle, LogicalSize, Manager, Runtime, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
-};
+use tauri::{AppHandle, Manager, Runtime, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 pub fn open_settings<R: Runtime>(app: &AppHandle<R>) -> Result<WebviewWindow<R>, String> {
     let window = match app.get_webview_window("settings") {
@@ -68,20 +66,26 @@ pub fn resize_widget<R: Runtime>(window: WebviewWindow<R>, height: f64) -> Resul
     if window.label() != "main" {
         return Err("Only the widget may resize itself".into());
     }
-    let available = window
-        .current_monitor()
-        .map_err(|error| error.to_string())?
-        .map(|monitor| f64::from(monitor.work_area().size.height) / monitor.scale_factor())
-        .unwrap_or(1000.0);
-    let height = widget_height(height, available)?;
-    let position = window.outer_position().map_err(|error| error.to_string())?;
-    window
-        .set_size(LogicalSize::new(360.0, height))
-        .map_err(|error| error.to_string())?;
-    window
-        .set_position(position)
-        .map_err(|error| error.to_string())?;
-    Ok(())
+    #[cfg(target_os = "macos")]
+    {
+        crate::macos_lifecycle::adjust_widget(&window, Some(widget_height(height, 1000.0)?))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let available = window
+            .current_monitor()
+            .map_err(|error| error.to_string())?
+            .map(|monitor| f64::from(monitor.work_area().size.height) / monitor.scale_factor())
+            .unwrap_or(1000.0);
+        let height = widget_height(height, available)?;
+        let position = window.outer_position().map_err(|error| error.to_string())?;
+        window
+            .set_size(tauri::LogicalSize::new(360.0, height))
+            .map_err(|error| error.to_string())?;
+        window
+            .set_position(position)
+            .map_err(|error| error.to_string())
+    }
 }
 
 #[cfg(test)]

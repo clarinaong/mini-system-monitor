@@ -119,7 +119,7 @@ impl WorkerRig {
         let app = mock_builder().build(mock_context(noop_assets())).unwrap();
         let now = Arc::new(AtomicU64::new(0));
         let clock_now = Arc::clone(&now);
-        let state = Arc::new(MonitorState::with_clock(Instant::now(), move || {
+        let state = Arc::new(MonitorState::with_clock(RealClock::new(), move || {
             Duration::from_millis(clock_now.load(Ordering::SeqCst))
         }));
         let reading = Arc::new(Mutex::new(Reading::High));

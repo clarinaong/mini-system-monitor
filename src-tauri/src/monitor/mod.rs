@@ -9,7 +9,6 @@ use crate::{
 use collector::HardwareCollector;
 use sampler::{RealClock, Sampler};
 use serde::Serialize;
-use std::time::Instant;
 use std::{
     collections::VecDeque,
     sync::{Arc, Condvar, Mutex},
@@ -118,7 +117,7 @@ struct Control {
 }
 
 struct Shared {
-    started: Instant,
+    clock: RealClock,
     control: Mutex<Control>,
     wake: Condvar,
     cache: Mutex<MonitorSnapshot>,
@@ -131,23 +130,24 @@ pub struct MonitorState {
 
 impl MonitorState {
     pub fn new() -> Self {
-        let started = Instant::now();
-        Self::with_clock(started, move || started.elapsed())
+        let clock = RealClock::new();
+        Self::with_clock(clock, move || clock.elapsed())
     }
 
     fn with_clock(
-        started: Instant,
-        clock: impl Fn() -> std::time::Duration + Send + 'static,
+        clock: RealClock,
+        evaluation_clock: impl Fn() -> std::time::Duration + Send + 'static,
     ) -> Self {
-        let clock: Box<dyn Fn() -> std::time::Duration + Send> = Box::new(clock);
+        let evaluation_clock: Box<dyn Fn() -> std::time::Duration + Send> =
+            Box::new(evaluation_clock);
         Self {
             shared: Arc::new(Shared {
-                started,
+                clock,
                 control: Mutex::new(Control {
                     interval_seconds: 1,
                     revision: 0,
                     evaluation_revision: 0,
-                    evaluator: AlertEvaluator::new(&Settings::default(), clock)
+                    evaluator: AlertEvaluator::new(&Settings::default(), evaluation_clock)
                         .expect("Default preferences must be valid"),
                     stopped: false,
                     settings: Settings::default(),
@@ -170,11 +170,7 @@ impl MonitorState {
             .map(|history| history.recorder());
         let interval_seconds = settings.monitoring_interval_seconds;
         self.start_with(settings, move |shared| {
-            let sampler = Sampler::new(
-                HardwareCollector::new(),
-                RealClock::new(shared.started),
-                interval_seconds,
-            );
+            let sampler = Sampler::new(HardwareCollector::new(), shared.clock, interval_seconds);
             run_worker(
                 shared,
                 sampler,
@@ -258,12 +254,19 @@ impl MonitorState {
             .lock()
             .map(|cache| {
                 let mut snapshot = cache.clone();
-                snapshot.monotonic_now_ms = self.shared.started.elapsed().as_millis() as u64;
+                snapshot.monotonic_now_ms = self.shared.clock.elapsed().as_millis() as u64;
                 snapshot.monitoring_interval_seconds = control.interval_seconds;
                 snapshot.config_revision = control.revision;
                 snapshot
             })
             .map_err(|_| "Metrics cache is unavailable".into())
+    }
+
+    #[cfg(any(target_os = "macos", test))]
+    pub fn recheck_deadline(&self) {
+        if let Ok(_control) = self.shared.control.lock() {
+            self.shared.wake.notify_one();
+        }
     }
 
     pub fn stop(&self) {
