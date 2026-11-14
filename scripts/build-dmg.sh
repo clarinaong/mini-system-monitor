@@ -21,7 +21,7 @@ env -u APPLE_SIGNING_IDENTITY -u APPLE_CERTIFICATE -u APPLE_CERTIFICATE_PASSWORD
   --config '{"bundle":{"macOS":{"signingIdentity":"-"}}}' -- --locked
 
 bundle_dir="$CARGO_TARGET_DIR/aarch64-apple-darwin/release/bundle"
-app="$bundle_dir/macos/mini-system-monitor.app"
+app="$bundle_dir/macos/Mini System Monitor.app"
 version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")
 dmg_dir="$bundle_dir/dmg"
 dmg_name="mini-system-monitor_${version}_aarch64.dmg"
