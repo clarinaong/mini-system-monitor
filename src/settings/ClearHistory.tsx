@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { settingsErrorMessage } from "./validation";
 
@@ -8,6 +8,17 @@ export default function ClearHistory({ recordingEnabled }: { recordingEnabled: b
   const [cleared, setCleared] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pending = useRef(false);
+  const returnFocus = useRef(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const keep = useRef<HTMLButtonElement>(null);
+
+  useLayoutEffect(() => {
+    if (confirming) keep.current?.focus();
+    else if (returnFocus.current) {
+      returnFocus.current = false;
+      trigger.current?.focus();
+    }
+  }, [confirming]);
 
   async function clear() {
     if (pending.current) return;
@@ -28,18 +39,19 @@ export default function ClearHistory({ recordingEnabled }: { recordingEnabled: b
 
   return <div className="settings-rule">
     {confirming ? <>
-      <p>Delete all saved performance readings now? This cannot be undone.
+      <p id="clear-history-confirmation">Delete all saved performance readings now? This cannot be undone.
         {recordingEnabled && " Recording will continue with new readings."}</p>
       <div className="notification-actions">
         <button type="button" onClick={() => { void clear(); }} disabled={clearing}>
           {clearing ? "Clearing…" : "Delete saved readings"}
         </button>
-        <button type="button" disabled={clearing} onClick={() => {
+        <button ref={keep} type="button" aria-describedby="clear-history-confirmation" disabled={clearing} onClick={() => {
           setConfirming(false);
           setError(null);
         }}>Keep history</button>
       </div>
-    </> : <button type="button" onClick={() => {
+    </> : <button ref={trigger} type="button" onClick={() => {
+      returnFocus.current = true;
       setConfirming(true);
       setCleared(false);
     }}>Clear history…</button>}

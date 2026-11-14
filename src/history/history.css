@@ -50,7 +50,7 @@ body.history-window {
   font: inherit;
 }
 
-.history-page button:disabled {
+.history-page button:is(:disabled, [aria-disabled="true"]) {
   opacity: 0.55;
 }
 
@@ -60,12 +60,15 @@ body.history-window {
 }
 
 .history-chart,
-.history-message {
+.history-message,
+.history-read-status:not(:empty) {
   padding: 14px 16px;
   border: 1px solid var(--divider);
   border-radius: 10px;
   background: var(--surface);
 }
+
+.history-read-status:empty { margin: 0; }
 
 .history-chart h2 {
   margin: 0 0 10px;

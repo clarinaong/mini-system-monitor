@@ -56,7 +56,7 @@ export default function NotificationPanel({ disabled }: { disabled: boolean }) {
 
   return <section className="settings-note" aria-label="Notification permission">
     <strong>macOS notification permission</strong>
-    <p>{busy ? "Checking or updating notification permission…" : status ? descriptions[status.permission] : "Notification status is unavailable."}</p>
+    <p role="status">{busy ? "Checking or updating notification permission…" : status ? descriptions[status.permission] : "Notification status is unavailable."}</p>
     <p>Permission is separate from saved alert preferences. Enable and apply alert rules to receive automatic notifications in the packaged app. The test notification is always silent.</p>
     <p>These controls take effect immediately. Apply and Cancel affect preferences only. For alert sounds, also enable sounds in macOS notification settings.</p>
     {status?.canSendTest && status.soundEnabled === false && <p role="status">macOS allows banners but has disabled sounds for this app.</p>}

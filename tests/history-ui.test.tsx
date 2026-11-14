@@ -82,6 +82,7 @@ test("offers retry on busy and prompts for a shorter range when capped", async (
   render(<HistoryWindow />);
   expect(await screen.findByRole("alert")).toHaveTextContent("still running");
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(screen.getByLabelText("Time range")).toHaveFocus();
   expect(await screen.findByRole("alert")).toHaveTextContent("Choose a shorter range");
   expect(read.mock.calls[1][0]).toEqual(read.mock.calls[0][0]);
   fireEvent.change(screen.getByLabelText("Time range"), { target: { value: 5 * MINUTE_MS } });
@@ -188,6 +189,7 @@ test("filters incident types and statuses, then aligns both charts with the sele
   const selected = within(timeline).getByRole("button", { name: /CPU spike, Interrupted/ });
   fireEvent.click(selected);
   expect(selected).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("region", { name: "Incident details and chart controls" })).toHaveFocus();
   const detail = screen.getByRole("region", { name: "Selected incident" });
   expect(within(detail).getByText("Unknown")).toBeVisible();
   expect(within(detail).queryByText("Duration")).toBeNull();
@@ -197,6 +199,7 @@ test("filters incident types and statuses, then aligns both charts with the sele
   expect(readIncidents).toHaveBeenCalledTimes(1);
 
   fireEvent.click(screen.getByRole("button", { name: "Back to selected time range" }));
+  expect(selected).toHaveFocus();
   expect(screen.queryByRole("region", { name: "Selected incident" })).toBeNull();
   await screen.findByRole("img", { name: /^CPU usage from/ });
   expect(container.querySelectorAll(".history-incident-line")).toHaveLength(0);

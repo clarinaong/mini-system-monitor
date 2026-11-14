@@ -133,11 +133,14 @@ describe("Settings window", () => {
     await loaded();
     await user.click(screen.getByLabelText("Record performance history"));
     await user.click(screen.getByRole("button", { name: "Clear history…" }));
-    await user.click(screen.getByRole("button", { name: "Keep history" }));
+    expect(screen.getByRole("button", { name: "Keep history" })).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(screen.getByRole("button", { name: "Clear history…" })).toHaveFocus();
     expect(mocks.invoke).not.toHaveBeenCalledWith("clear_history");
     await user.click(screen.getByRole("button", { name: "Clear history…" }));
     await user.click(screen.getByRole("button", { name: "Delete saved readings" }));
     await screen.findByText("Performance history cleared.");
+    expect(screen.getByRole("button", { name: "Clear history…" })).toHaveFocus();
     expect(mocks.invoke).toHaveBeenCalledWith("clear_history");
     expect(saves()).toHaveLength(0);
     expect(screen.getByLabelText("Record performance history")).toBeChecked();
@@ -239,6 +242,7 @@ describe("Settings window", () => {
     fireEvent.change(screen.getByLabelText("CPU threshold (%)"), { target: { value: "101" } });
     fireEvent.change(screen.getByLabelText("Cooldown seconds per rule"), { target: { value: "0" } });
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    expect(screen.getByLabelText("CPU threshold (%)")).toHaveFocus();
     expect(screen.getByLabelText("CPU threshold (%)")).toHaveAttribute("aria-invalid", "true");
     expect(screen.getByLabelText("Cooldown seconds per rule")).toHaveAttribute("aria-invalid", "true");
     expect(screen.getByText("Correct the highlighted values before applying.")).toBeVisible();

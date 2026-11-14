@@ -1,5 +1,5 @@
 import { useAppearance } from "../hooks/useAppearance";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useSettings } from "../hooks/useSettings";
@@ -42,11 +42,19 @@ function SettingsForm({ snapshot, loading, reload, acceptSaved }: FormProps) {
   const [baseline, setBaseline] = useState(snapshot.settings);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
+  const formRef = useRef<HTMLFormElement>(null);
+  const [invalidSubmission, setInvalidSubmission] = useState(0);
   const [tried, setTried] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const dirty = JSON.stringify(draft) !== JSON.stringify(baseline);
   const errors = validateSettings(draft);
   const changedElsewhere = JSON.stringify(snapshot.settings) !== JSON.stringify(baseline);
+
+  useLayoutEffect(() => {
+    if (invalidSubmission > 0) {
+      formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+    }
+  }, [invalidSubmission]);
 
   useEffect(() => {
     if (!dirty) { setDraft(structuredClone(snapshot.settings)); setBaseline(snapshot.settings); }
@@ -77,7 +85,11 @@ function SettingsForm({ snapshot, loading, reload, acceptSaved }: FormProps) {
   async function apply(event: FormEvent) {
     event.preventDefault();
     setTried(true);
-    if (Object.keys(errors).length || savingRef.current || snapshot.loadError || !dirty) return;
+    if (savingRef.current || snapshot.loadError || !dirty) return;
+    if (Object.keys(errors).length) {
+      setInvalidSubmission(count => count + 1);
+      return;
+    }
     savingRef.current = true;
     setSaving(true);
     setActionError(null);
@@ -105,7 +117,7 @@ function SettingsForm({ snapshot, loading, reload, acceptSaved }: FormProps) {
       onChange={value => change(next => update(next, value))} />
   );
 
-  return <form onSubmit={apply} noValidate>
+  return <form ref={formRef} onSubmit={apply} noValidate>
     <div className="settings-scroll">
       {snapshot.loadError && <div className="settings-error" role="alert">
         <strong>Saved preferences could not be loaded.</strong>
@@ -119,7 +131,7 @@ function SettingsForm({ snapshot, loading, reload, acceptSaved }: FormProps) {
         <legend>Monitoring</legend>
         <label className="settings-row" htmlFor="interval">
           <span>Refresh interval</span>
-          <select id="interval" value={draft.monitoringIntervalSeconds}
+          <select id="interval" aria-invalid={Boolean(errorFor("interval"))} value={draft.monitoringIntervalSeconds}
             onChange={event => change(next => { next.monitoringIntervalSeconds = Number(event.target.value) as Settings["monitoringIntervalSeconds"]; })}>
             {[1, 2, 5, 10].map(seconds => <option key={seconds} value={seconds}>{seconds} second{seconds === 1 ? "" : "s"}</option>)}
           </select>
@@ -219,7 +231,7 @@ export default function SettingsWindow() {
   const { snapshot, error, loading, reload, acceptSaved } = useSettings();
   useAppearance(snapshot?.settings.appearance);
   return <main className="settings-page">
-    <header className="settings-header"><h1>Settings</h1><p>Make the widget work for you.</p></header>
+    <header className="settings-header"><h1>Settings</h1></header>
     {error && <div className="settings-error" role="alert"><p>{error}</p>
       <button type="button" onClick={reload}>Retry</button></div>}
     {snapshot ? <SettingsForm snapshot={snapshot} loading={loading} reload={reload} acceptSaved={acceptSaved} />

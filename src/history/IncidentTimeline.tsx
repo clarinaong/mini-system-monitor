@@ -32,7 +32,7 @@ type IncidentRead = { data: SavedIncident[] } | { error: string } | null;
 export function IncidentTimeline({ result, selected, onSelect, onRetry }: {
   result: IncidentRead;
   selected: SavedIncident | null;
-  onSelect: (incident: SavedIncident | null) => void;
+  onSelect: (incident: SavedIncident | null, trigger?: HTMLButtonElement) => void;
   onRetry: () => void;
 }) {
   const [kind, setKind] = useState<IncidentKind | "all">("all");
@@ -80,7 +80,7 @@ export function IncidentTimeline({ result, selected, onSelect, onRetry }: {
                 <li key={key}>
                   <button type="button" aria-pressed={selected !== null && incidentKey(selected) === key}
                     aria-label={`${incidentKinds[incident.kind]}, ${incidentStatuses[incident.status]}, ${timestampLabel.format(incident.startMs)}`}
-                    onClick={() => onSelect(incident)}>
+                    onClick={event => onSelect(incident, event.currentTarget)}>
                     <IncidentTime ms={incident.startMs} />
                     <strong>{incidentKinds[incident.kind]}</strong>
                     <span>{incidentStatuses[incident.status]}</span>

@@ -29,6 +29,7 @@ export default function HistoryWindow() {
   const pending = useRef<Promise<unknown> | null>(null);
   const focusPanel = useRef<HTMLDivElement>(null);
   const rangeSelect = useRef<HTMLSelectElement>(null);
+  const incidentTrigger = useRef<HTMLButtonElement | null>(null);
   useEffect(() => {
     if (selected) focusPanel.current?.focus();
   }, [selected]);
@@ -77,18 +78,20 @@ export default function HistoryWindow() {
             {ranges.map(range => <option key={range.duration} value={range.duration}>{range.label}</option>)}
             <option value="yesterday">Yesterday</option>
           </select>
-          <button type="button" disabled={!history && !incidents && !summary} onClick={() => {
+          <button type="button" aria-disabled={!history && !incidents && !summary} onClick={() => {
+            if (!history && !incidents && !summary) return;
             setSelected(null);
             setSelection(historySelection(range));
           }}>Refresh</button>
         </div>
       </header>
       {selected && (
-        <div className="incident-focus" ref={focusPanel} tabIndex={-1} aria-label="Incident details and chart controls">
+        <div className="incident-focus" ref={focusPanel} tabIndex={-1} role="region" aria-label="Incident details and chart controls">
           <IncidentDetails incident={selected} />
           <button type="button" onClick={() => {
             setSelected(null);
-            rangeSelect.current?.focus();
+            if (incidentTrigger.current?.isConnected) incidentTrigger.current.focus();
+            else rangeSelect.current?.focus();
           }}>Back to selected time range</button>
         </div>
       )}
@@ -96,22 +99,30 @@ export default function HistoryWindow() {
         ? selected ? "Individual recorded samples around the incident. The dashed line marks its start."
           : "Individual recorded samples"
         : "One-minute averages. RAM shows average used bytes as a percentage of average capacity."}</p>
-      {!history ? <p role="status">Loading history…</p> : "error" in history ? (
+      <p className="history-read-status" role="status">
+        {!history ? "Loading history…" : "data" in history && history.data.rows.length === 0
+          ? "No saved samples in this range." : null}
+      </p>
+      {history && ("error" in history ? (
         <div className="history-message">
           <p role="alert">{history.error}</p>
-          <button type="button" onClick={() => setHistoryAttempt(attempt => attempt + 1)}>Retry</button>
+          <button type="button" onClick={() => {
+            setHistoryAttempt(attempt => attempt + 1);
+            rangeSelect.current?.focus();
+          }}>Retry</button>
         </div>
-      ) : history.data.rows.length === 0 ? (
-        <p className="history-message" role="status">No saved samples in this range.</p>
-      ) : (
+      ) : history.data.rows.length > 0 && (
         <div className="history-charts">
           <HistoryGraph result={history.data} range={graphRange} metric="cpu" incidentStart={selected?.startMs} />
           <HistoryGraph result={history.data} range={graphRange} metric="ram" incidentStart={selected?.startMs} />
         </div>
-      )}
+      ))}
       <PerformanceSummary result={summary} request={selection.summary} timeZone={selection.timeZone}
         onRetry={() => setSummaryAttempt(attempt => attempt + 1)} />
-      <IncidentTimeline result={incidents} selected={selected} onSelect={setSelected}
+      <IncidentTimeline result={incidents} selected={selected} onSelect={(incident, trigger) => {
+        incidentTrigger.current = trigger ?? null;
+        setSelected(incident);
+      }}
         onRetry={() => setIncidentAttempt(attempt => attempt + 1)} />
     </main>
   );
